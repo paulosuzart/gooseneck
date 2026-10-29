@@ -4,8 +4,11 @@
 // worker loads the template into a gooseneck::Engine once, at startup, and
 // keeps it in its AppState for the server's life.
 //
-//   goose run examples/http/main.goose [port]      # default port 9997
+//   goose build examples/http/main.goose -o examples/http/hello
+//   examples/http/hello [port]      # default port 9997
 //   curl http://localhost:9997/hello/Paulo
+//
+// goose run cannot run it: its JIT has no threads. See README.md here.
 import http from "github.com/kaitk/goose-http@v0.5.12";
 import plod from "github.com/kaitk/plod@v0.5.9";
 import handlebars from "../../gooseneck";
