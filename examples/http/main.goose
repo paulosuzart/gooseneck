@@ -16,8 +16,8 @@ const HTML: u8[24] = "text/html; charset=utf-8";
 // The template's context: {{name}} at the top, {{#if first}} for a line
 // that only the worker's first request shows, and {{#with server}} for the
 // nested fields, where {{../name}} reaches back to the visitor's name and
-// {{ordinal requests}} calls the helper in helpers.goose. {{#each links}}
-// lists the links.
+// {{ordinal requests}} calls the helper in helpers.goose, as {{now}} does.
+// {{#each links}} lists the links.
 struct ServerInfo {
     name: const u8[:],
     requests: i64,

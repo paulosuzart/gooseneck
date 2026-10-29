@@ -12,6 +12,7 @@
   {{#with server}}
   <p>Served to {{../name}} by {{name}}, the {{ordinal requests}} request on this worker.</p>
   {{/with}}
+  <p>Rendered at {{now}} (Unix time).</p>
   <ul>
     {{#each links}}
     <li><a href="{{url}}">{{label}}</a></li>

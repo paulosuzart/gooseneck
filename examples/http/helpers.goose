@@ -1,5 +1,6 @@
 // Helpers for the hello page. {{ordinal requests}} is "1st", "2nd", "3rd",
-// "4th", with 11th, 12th and 13th staying "th".
+// "4th", with 11th, 12th and 13th staying "th". {{now}} is the time of the
+// render, in whole seconds since the Unix epoch.
 namespace helpers;
 
 fn _suffix(n: i64) -> const u8[:] {
@@ -24,8 +25,15 @@ fn _ordinal(args: const gooseneck::Args&) -> json::Value {
     }
 }
 
-// exposes all helpers to the template.
+// The current time in whole seconds since the Unix epoch.
+fn _now() -> json::Value {
+    return json::Value.Int { v: time_ns() / 1000000000 };
+}
+
+// The helpers the template may call, one registration each.
 fn all(name: const u8[:], args: const gooseneck::Args&) -> gooseneck::Result {
-    if name == "ordinal" { return gooseneck::known(_ordinal(args)); }
-    return gooseneck::unknown();
+    return gooseneck::helpers(args) { call =>
+        gooseneck::helper(call, "ordinal") { return gooseneck::known(_ordinal(args)); };
+        gooseneck::helper(call, "now") { return gooseneck::known(_now()); };
+    };
 }
