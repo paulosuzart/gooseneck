@@ -8,7 +8,7 @@
 // the fields the template names, which a template that only iterates an
 // object never does. Each case asserts, then prints its name;
 // scripts/test.sh compares that list with test/expected/each.out.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 struct Item { name: const u8[:], price: i64 }
 

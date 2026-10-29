@@ -28,8 +28,10 @@
 // against the working directory. goose run main.goose -- render ... works
 // too, and prints its own compile progress on stderr as well.
 //
-// An example of gooseneck inside an HTTP service is in examples/http/.
-import gooseneck.handlebars;
+// The library is gooseneck.goose beside this file, which this program
+// imports as a module of its own directory. An example of gooseneck inside
+// an HTTP service is in examples/http/.
+import gooseneck;
 
 fn usage() {
     write_stderr("usage: gooseneck render <template> <context.json>\n");

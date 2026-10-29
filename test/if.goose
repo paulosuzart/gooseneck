@@ -7,7 +7,7 @@
 // gooseneck checks block calls at compile time. Each case asserts, then
 // prints its name; scripts/test.sh compares that list with
 // test/expected/if.out.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 struct Item { label: const u8[:] }
 

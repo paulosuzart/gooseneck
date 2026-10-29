@@ -18,7 +18,7 @@
 // handlebars.js throws "Missing helper", {{#with}} takes only a path, and
 // the errors are gooseneck's messages. Each case asserts, then prints its
 // name; scripts/test.sh compares that list with test/expected/helpers.out.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 struct User { first: const u8[:], last: const u8[:] }
 

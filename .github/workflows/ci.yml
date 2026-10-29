@@ -1,0 +1,48 @@
+# Runs the tests and compiles the CLI and examples/http, on every push to
+# main and on every pull request. Nothing is published.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      GOOSE_VERSION: v2026.3
+    steps:
+      - uses: actions/checkout@v4
+
+      # The release's compiler, standard library and runtime, in one archive.
+      # goose build uses the runner's cc (gcc); goose-http's Linux shim
+      # also needs liburing.
+      - name: Install Goose and liburing
+        run: |
+          curl -fsSL "https://github.com/aardappel/goose/releases/download/${GOOSE_VERSION}/goose-${GOOSE_VERSION}-linux-x64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/goose-${GOOSE_VERSION}-linux-x64" >> "$GITHUB_PATH"
+          sudo apt-get update -q
+          sudo apt-get install -y -q liburing-dev
+
+      # Packages examples/http fetches (goose-http, plod), pinned by tag.
+      - name: Cache Goose packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.goose/pkg
+          key: goose-pkg-${{ env.GOOSE_VERSION }}-${{ hashFiles('examples/http/main.goose') }}
+
+      - name: Tests (suites and CLI)
+        run: scripts/test.sh
+
+      - name: Build the CLI
+        run: goose build main.goose -o build/gooseneck
+
+      - name: Build examples/http
+        run: |
+          goose fetch examples/http/main.goose
+          goose build examples/http/main.goose -o build/http-hello

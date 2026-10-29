@@ -1,7 +1,7 @@
 // Rendered templates. Goose has no test runner in this release: each case
 // asserts, then prints its name. scripts/test.sh compares that list with
 // test/expected/render.out.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 struct City { name: const u8[:] }
 

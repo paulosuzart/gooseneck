@@ -5,7 +5,7 @@
 // a name registered twice, and a block no registration knows. Each case
 // asserts, then prints its name;
 // scripts/test.sh compares that list with test/expected/registration.out.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 struct Item { name: const u8[:] }
 

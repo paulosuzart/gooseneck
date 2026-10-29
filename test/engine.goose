@@ -4,7 +4,7 @@
 // malformed file comes back as the engine's error. Fixtures sit in
 // test/fixtures/, found through resource_dir(), which is the directory of
 // this source in a goose run.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 struct City { name: const u8[:] }
 

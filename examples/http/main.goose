@@ -11,7 +11,7 @@
 // goose run cannot run it: its JIT has no threads. See README.md here.
 import http from "github.com/kaitk/goose-http@v0.5.12";
 import plod from "github.com/kaitk/plod@v0.5.9";
-import handlebars from "../../gooseneck";
+import gooseneck from "../..";
 import .helpers;
 
 const HTML: u8[24] = "text/html; charset=utf-8";

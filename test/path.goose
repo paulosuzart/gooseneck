@@ -1,6 +1,6 @@
 // _validate_path: a normal path passes, a keyword only fails past the first
 // byte, and a character from the invalid set fails the segment.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 fn check(label: const u8[:], path: const u8[:], want: bool, why_want: const u8[:]) {
     let ok, why = gooseneck::_validate_path(path);

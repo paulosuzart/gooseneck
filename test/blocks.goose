@@ -7,7 +7,7 @@
 // template and data, except the errors, which are gooseneck's messages.
 // Each case asserts, then prints its name; scripts/test.sh compares that
 // list with test/expected/blocks.out.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 struct Item { name: const u8[:], price: i64 }
 

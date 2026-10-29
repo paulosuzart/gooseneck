@@ -2,7 +2,7 @@
 // bools, optionals (Null), slices (arrays), and the filtered conversion that skips
 // fields no path in the template names. Each case asserts, then prints its
 // name; scripts/test.sh compares that list with test/expected/values.out.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 struct Point { x: f64, y: f32 }
 

@@ -2,7 +2,7 @@
 // same with the Greeting struct and with test/fixtures/greeting.json, the
 // same data as JSON. Then the JSON data model (escapes, Int vs Num, true,
 // false, null, arrays) and malformed JSON, which comes back as the error.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 struct City { name: const u8[:] }
 

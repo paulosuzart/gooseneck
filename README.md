@@ -20,11 +20,13 @@ everything it supports: the test suites check it case by case.
 
 ## Quick start
 
-Import the `gooseneck` directory as a package (the path is relative to
-your file), compile, render:
+Declare gooseneck as a package in your program's root file, from GitHub at
+a tag or from a local checkout (a path relative to your file), then
+compile and render:
 
 ```goose
-import handlebars from "../gooseneck";
+import gooseneck from "github.com/paulosuzart/gooseneck@<tag>";
+// or, from a checkout: import gooseneck from "../gooseneck";
 
 struct Book { title: const u8[:], year: i64 }
 
@@ -46,6 +48,11 @@ fn main() {
     print(text);   // Ada's shelf: 0. Frankenstein (1818) 1. Dune (1965)
 }
 ```
+
+The name after `import` must be `gooseneck`: it names the package's entry
+file, `gooseneck.goose` at the root of this repository. Everything in it is
+in the namespace `gooseneck`, so calls read `gooseneck::render(...)`. (The
+import name does not rename a namespace; it only picks the package.)
 
 ### Preparing the template
 
@@ -318,6 +325,12 @@ examples/http/hello            # port 9997; pass another port as the first argum
 curl http://localhost:9997/hello/Paulo
 ```
 
+**CI.** `.github/workflows/ci.yml` runs on every push to `main` and on
+every pull request, on Ubuntu: it installs the Goose v2026.3 release and
+liburing (which goose-http needs on Linux), runs `scripts/test.sh` (the
+suites and the CLI checks), and builds the CLI and `examples/http`. It
+publishes nothing; there is no release or badge yet.
+
 **Benchmark.** `benchmark/run.sh` compares gooseneck with Go (raymond) and
 Python (pybars3) on the same templates. It first checks that every
 implementation renders byte-identical output. See
@@ -542,11 +555,19 @@ and which parameter. Rendering reads it straight off the stack.
 ## Layout
 
 ```
-gooseneck/handlebars.goose   the engine: tokenizer, tag lexer, parser, conversion, renderer
+gooseneck.goose              the library, the package's entry: tokenizer, tag lexer, parser, conversion, renderer
 main.goose                   CLI: gooseneck render <template> <JSON file or folder>
 examples/http/               the engine inside an HTTP service
 test/                        test suites, fixtures and expected outputs
 scripts/test.sh              runs the suites, then scripts/test_cli.sh
 scripts/test_cli.sh          builds the CLI and checks gooseneck render
+.github/workflows/ci.yml     CI: tests and builds on pushes to main and on pull requests
 benchmark/                   gooseneck vs Go vs Python
 ```
+
+The library sits at the root because Goose's `import name from "source";`
+loads the entry `name.goose` from the package's directory, which for a git
+source is the repository root; there is no way to point at a subdirectory
+(Goose `docs/packages.md`, "Using a package"). The CLI is a program of its
+own beside it, which imports the library as a module of its directory and
+is never part of what a user's program imports.

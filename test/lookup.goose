@@ -6,7 +6,7 @@
 // 4.7.10 renders for the same template and data, except the cases under
 // "gooseneck's own". Each case asserts, then prints its name;
 // scripts/test.sh compares that list with test/expected/lookup.out.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 struct Home { city: const u8[:] }
 

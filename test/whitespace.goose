@@ -3,7 +3,7 @@
 // expected output below is what handlebars.js 4.7.10 renders for the same
 // template and data. Each case asserts, then prints its name;
 // scripts/test.sh compares that list with test/expected/whitespace.out.
-import handlebars from "../gooseneck";
+import gooseneck from "..";
 
 struct City { name: const u8[:] }
 
