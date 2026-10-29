@@ -1,0 +1,13 @@
+file template
+same engine, second context
+same engine, render again
+same engine, JSON context
+same engine, inline JSON
+engines in a struct
+engines in a struct, again
+engine owns its text
+copied engine
+missing file
+empty file
+parse error in file
+template error

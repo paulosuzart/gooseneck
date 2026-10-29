@@ -1,0 +1,32 @@
+index literal
+index path
+index string
+index past end
+negative index
+index with leading zero
+key literal
+missing key
+lookup on a string
+lookup on nothing
+escaped and raw
+parallel arrays
+inside with
+nested lookup
+with lookup
+with lookup missing
+each lookup
+if lookup
+if lookup includeZero
+key from each item
+key from @key
+nested arrays
+each nested array
+numeric keys
+dynamic key
+nested lookup with path key
+key from parent
+dynamic key on a struct
+dynamic key on a named field
+one param
+three params
+built-in wins

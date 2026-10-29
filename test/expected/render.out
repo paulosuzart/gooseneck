@@ -1,0 +1,35 @@
+fields
+nested with
+adjacent tags
+back to parent
+dotted path
+dotted with
+with result parent
+current dot
+parent path
+parent twice
+parent at root
+html escape
+raw triple
+missing field
+unknown with
+scalar with
+trailing text
+escaped mustache
+escaped inside text
+escaped then mustache
+two escaped
+escaped backslash
+escaped then escaped backslash
+three backslashes
+escaped triple
+escaped unclosed
+escaped comment
+escaped block
+trailing backslash
+empty template
+extra with
+bad path
+bad with path
+keyword in path
+empty expression

@@ -1,0 +1,49 @@
+helper mustache
+helper result escaped
+helper result raw
+helper with spaces
+if eq true
+if eq false
+bool result
+string literal
+number literal
+two literals
+int result
+nested subexpression
+subexpression of subexpression
+two subexpressions
+hash argument
+hash subexpression
+hash inside subexpression
+if zero result
+if zero result includeZero
+parens in strings
+helper inside with
+escaped concat
+raw concat
+unknown subexpression
+bare helper wins
+bare helper raw
+scoped paths skip helpers
+dotted path skips helpers
+zero-argument helper
+helper result Null wins
+param is a path
+subexpression without arguments
+no helper, field
+block param beats helper
+unknown helper
+with subexpression
+no helpers
+block helpers
+captured state
+unclosed subexpression
+unclosed nested subexpression
+stray close
+empty subexpression
+text after subexpression
+unclosed string in subexpression
+bad helper name
+bad argument in subexpression
+param after hash
+includeZero subexpression

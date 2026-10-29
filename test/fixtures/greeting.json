@@ -1,0 +1,9 @@
+{
+  "name": "John",
+  "age": 21,
+  "address": {
+    "street": "123 Main St",
+    "city": { "name": "Springfield" }
+  },
+  "special": "& < > \" ' ` ="
+}

@@ -1,0 +1,21 @@
+float
+float integral
+float f32
+float shortest
+float exponent
+float negative zero
+bool
+optional present
+optional null
+with optional present
+with optional null
+with float
+with bool
+with list
+list writes nothing
+struct of floats
+filtered one field
+filtered nested
+filtered with
+filtered list
+filtered name everywhere

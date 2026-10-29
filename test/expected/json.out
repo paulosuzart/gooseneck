@@ -1,0 +1,30 @@
+fields
+nested with
+adjacent tags
+back to parent
+dotted path
+dotted with
+with result parent
+current dot
+parent path
+parent twice
+parent at root
+html escape
+raw triple
+missing field
+unknown with
+scalar with
+json string escapes
+json numbers
+json literals
+json array writes nothing
+json with object
+json with skips
+json root scalar
+missing value: json: expected a value at byte 6
+trailing comma: json: expected a key at byte 8
+unterminated string: json: bad string at byte 6
+bad escape: json: bad string at byte 10
+text after value: json: trailing input at byte 9
+empty input: json: unexpected end of input at byte 0
+missing json file

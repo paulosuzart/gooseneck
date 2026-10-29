@@ -1,0 +1,30 @@
+tilde both sides
+tilde left
+tilde right
+tilde eats blank lines
+tilde raw triple
+tilde with spaces in tag
+tilde block open and close
+tilde inside block
+tilde only outside block
+tilde next to tag
+standalone block lines
+standalone indented nested
+standalone tabs and trailing spaces
+standalone crlf
+standalone at start and end
+standalone at end with newline
+standalone indented at start
+standalone empty body
+standalone comments
+comment alone
+inline comment
+tilde comment
+inline block untouched
+block with text on its line
+two block tags on one line
+mustache alone on a line
+blank lines kept
+standalone and tilde together
+unclosed tag
+unclosed comment

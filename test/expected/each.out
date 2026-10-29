@@ -1,0 +1,84 @@
+this
+dot
+index
+array key
+first and last in if
+first and last written
+item fields
+this.field
+parent
+nested each
+each inside with
+each inside if
+if inside each
+includeZero inside each
+with this
+empty list
+missing
+string
+literal
+data outside each
+data after each
+parent index
+parent index through with
+parent key first last
+past the outermost each
+parent data outside each
+each else
+each else skipped
+with else
+if else
+standalone each
+tilde each
+standalone else
+indented standalone else
+object
+object data
+nested arrays
+parent first in if
+nested index
+empty object
+object members
+param item
+param index
+param key of object
+param field and context
+nested params
+inner param shadows
+outer param in plain each
+with param
+with second param
+scoped path is no param
+param inside with
+parent path is no param
+param in if
+param as lookup key
+with on param
+each on param
+no params in inverse
+field of key
+spaced params
+params and data
+param out of scope
+third param
+params on lookup
+param under parent each
+params on else each
+standalone params
+no param names
+dotted param name
+unclosed params
+params without as
+params on if
+struct object members
+unclosed each
+unclosed inner
+stray close
+mismatched close
+each without param
+each two params
+each hash
+else at top
+second else
+else if
+unknown data variable

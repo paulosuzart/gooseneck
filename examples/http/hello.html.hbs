@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Hello, {{name}}</title>
+</head>
+<body>
+  <h1>Hello, {{name}}!</h1>
+  {{#if first}}
+  <p>You are this worker's first visitor.</p>
+  {{/if}}
+  {{#with server}}
+  <p>Served to {{../name}} by {{name}}, the {{ordinal requests}} request on this worker.</p>
+  {{/with}}
+  <ul>
+    {{#each links}}
+    <li><a href="{{url}}">{{label}}</a></li>
+    {{/each}}
+  </ul>
+</body>
+</html>
