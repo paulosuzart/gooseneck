@@ -18,77 +18,6 @@ everything it supports: the test suites check it case by case.
 </ul>
 ```
 
-## What works today
-
-- **Expressions**: `{{name}}`, dotted paths `{{address.city}}`, `this`, `.`,
-  `./name`, `this.name`, and parent lookups with `../`.
-- **Escaping**: `{{x}}` is HTML-escaped exactly like handlebars.js
-  (`&`, `<`, `>`, `"`, `'`, `` ` `` and `=`); `{{{x}}}` writes raw.
-  `\{{x}}` writes the mustache itself, as text.
-- **Comments**: `{{! ... }}` and `{{!-- ... --}}`.
-- **Whitespace control**: `{{~x~}}` and standalone lines for block tags,
-  `{{else}}` and comments.
-- **`{{#with path}}`** to step into an object.
-- **`{{#if value}}`** with handlebars.js truthiness and `includeZero=true`,
-  and its inverse **`{{#unless value}}`**.
-- **`{{#each path}}`** over arrays and objects, with `@index`, `@key`,
-  `@first` and `@last`, and `@../index` (and so on) for an enclosing each.
-- **Block parameters**: `{{#each items as |item i|}}` names the item and its
-  index (its key, for an object), and `{{#with person as |p|}}` the object, so
-  `{{item.name}}` or `{{g.name}}` reach them from any depth below. They are
-  tied to their block when the template compiles, not looked up by name.
-- **`{{else}}`** on `#if`, `#unless`, `#with` and `#each`, and chains such as
-  `{{#if a}}A{{else if b}}B{{else each items}}{{this}}{{else}}none{{/if}}`:
-  any block helper after `else`, closed by the first block's tag.
-- **`{{lookup target key}}`**: an array element by index or an object member by
-  key, with the key coming from a path, a literal, `@index`/`@key` or a
-  subexpression: `{{#each names}}{{this}} is {{lookup ../ages @index}}{{/each}}`.
-  A lookup resolves to a context node, so `{{#with (lookup people 0)}}` and
-  `{{#each (lookup person "tags")}}` step into what it finds.
-- **User helpers**: `{{helper arg key=value}}`, `{{{helper ...}}}`,
-  zero-argument `{{helper}}`, and nested subexpressions such as
-  `{{#if (eq (lower a) b)}}`. A bare `{{name}}` calls a helper of that name
-  before it looks up the field, as in handlebars.js.
-- **User block helpers**: `{{#list items}}...{{else}}...{{/list}}` that write
-  around their body, walk it any number of times on any context, iterate
-  with `@index`/`@key`/`@first`/`@last` and block parameters, or walk the
-  inverse instead.
-- **Raw blocks**: `{{{{raw}}}} {{not parsed}} {{{{/raw}}}}` hands a block
-  helper its content as plain text.
-- **Two kinds of context**: a typed Goose struct (converted through
-  compile-time reflection) or JSON text and files.
-- **Clear compile errors**: `unexpected /with`, `unclosed #each`,
-  `unclosed subexpression: (eq a b`, `#if takes exactly one argument`, and more.
-
-### Not yet
-
-- Partials, inline partials and decorators.
-- `{{^}}`. Block parameters on `#if` and `#unless` are a compile error
-  (handlebars.js accepts them and leaves them empty).
-- A user block helper's block parameters are always its body's context and
-  the item's `@key` (as `#each`'s): it can't pass values of its own, as
-  handlebars.js's `blockParams` can. Its body's context is a node the
-  arguments find (`this`, a param, an item), never a computed value.
-- `@root`. Any `@name` other than `index`, `key`, `first` and `last` is a
-  compile error.
-- User helper answers that are objects or arrays. Answers are scalars for now
-  (the built-in `lookup` is the exception).
-- A user helper named `lookup` is never called: the built-in wins
-  (handlebars.js lets `registerHelper` replace it). A `lookup` without exactly
-  two params renders nothing (handlebars.js throws).
-- A bracketed segment with a space or a dot, such as `{{a.[x y]}}` or
-  `{{a.[x.y]}}`, compiles but finds nothing (handlebars.js reads it as one
-  literal key).
-- `{{this}}` on an object or array writes nothing (handlebars.js writes
-  `[object Object]` or a comma-joined list).
-- A call no registered helper answers renders nothing and is falsy
-  (handlebars.js throws `Missing helper`).
-- Iterating a *typed struct* as an object, or looking up one of its fields
-  with a dynamic key (`{{lookup person field}}`), only sees the fields the
-  template names elsewhere: in a path, or as a literal lookup key such as
-  `{{lookup person "city"}}` (see [typed contexts](#c-typed-structs-as-contexts)).
-  JSON objects have all their members.
-
 ## Quick start
 
 Import the `gooseneck` directory as a package (the path is relative to
@@ -357,6 +286,78 @@ Python (pybars3) on the same templates. It first checks that every
 implementation renders byte-identical output. See
 [benchmark/README.md](benchmark/README.md) for what is measured, how to run
 it and the latest results.
+
+
+## What works today
+
+- **Expressions**: `{{name}}`, dotted paths `{{address.city}}`, `this`, `.`,
+  `./name`, `this.name`, and parent lookups with `../`.
+- **Escaping**: `{{x}}` is HTML-escaped exactly like handlebars.js
+  (`&`, `<`, `>`, `"`, `'`, `` ` `` and `=`); `{{{x}}}` writes raw.
+  `\{{x}}` writes the mustache itself, as text.
+- **Comments**: `{{! ... }}` and `{{!-- ... --}}`.
+- **Whitespace control**: `{{~x~}}` and standalone lines for block tags,
+  `{{else}}` and comments.
+- **`{{#with path}}`** to step into an object.
+- **`{{#if value}}`** with handlebars.js truthiness and `includeZero=true`,
+  and its inverse **`{{#unless value}}`**.
+- **`{{#each path}}`** over arrays and objects, with `@index`, `@key`,
+  `@first` and `@last`, and `@../index` (and so on) for an enclosing each.
+- **Block parameters**: `{{#each items as |item i|}}` names the item and its
+  index (its key, for an object), and `{{#with person as |p|}}` the object, so
+  `{{item.name}}` or `{{g.name}}` reach them from any depth below. They are
+  tied to their block when the template compiles, not looked up by name.
+- **`{{else}}`** on `#if`, `#unless`, `#with` and `#each`, and chains such as
+  `{{#if a}}A{{else if b}}B{{else each items}}{{this}}{{else}}none{{/if}}`:
+  any block helper after `else`, closed by the first block's tag.
+- **`{{lookup target key}}`**: an array element by index or an object member by
+  key, with the key coming from a path, a literal, `@index`/`@key` or a
+  subexpression: `{{#each names}}{{this}} is {{lookup ../ages @index}}{{/each}}`.
+  A lookup resolves to a context node, so `{{#with (lookup people 0)}}` and
+  `{{#each (lookup person "tags")}}` step into what it finds.
+- **User helpers**: `{{helper arg key=value}}`, `{{{helper ...}}}`,
+  zero-argument `{{helper}}`, and nested subexpressions such as
+  `{{#if (eq (lower a) b)}}`. A bare `{{name}}` calls a helper of that name
+  before it looks up the field, as in handlebars.js.
+- **User block helpers**: `{{#list items}}...{{else}}...{{/list}}` that write
+  around their body, walk it any number of times on any context, iterate
+  with `@index`/`@key`/`@first`/`@last` and block parameters, or walk the
+  inverse instead.
+- **Raw blocks**: `{{{{raw}}}} {{not parsed}} {{{{/raw}}}}` hands a block
+  helper its content as plain text.
+- **Two kinds of context**: a typed Goose struct (converted through
+  compile-time reflection) or JSON text and files.
+- **Clear compile errors**: `unexpected /with`, `unclosed #each`,
+  `unclosed subexpression: (eq a b`, `#if takes exactly one argument`, and more.
+
+### Not yet
+
+- Partials, inline partials and decorators.
+- `{{^}}`. Block parameters on `#if` and `#unless` are a compile error
+  (handlebars.js accepts them and leaves them empty).
+- A user block helper's block parameters are always its body's context and
+  the item's `@key` (as `#each`'s): it can't pass values of its own, as
+  handlebars.js's `blockParams` can. Its body's context is a node the
+  arguments find (`this`, a param, an item), never a computed value.
+- `@root`. Any `@name` other than `index`, `key`, `first` and `last` is a
+  compile error.
+- User helper answers that are objects or arrays. Answers are scalars for now
+  (the built-in `lookup` is the exception).
+- A user helper named `lookup` is never called: the built-in wins
+  (handlebars.js lets `registerHelper` replace it). A `lookup` without exactly
+  two params renders nothing (handlebars.js throws).
+- A bracketed segment with a space or a dot, such as `{{a.[x y]}}` or
+  `{{a.[x.y]}}`, compiles but finds nothing (handlebars.js reads it as one
+  literal key).
+- `{{this}}` on an object or array writes nothing (handlebars.js writes
+  `[object Object]` or a comma-joined list).
+- A call no registered helper answers renders nothing and is falsy
+  (handlebars.js throws `Missing helper`).
+- Iterating a *typed struct* as an object, or looking up one of its fields
+  with a dynamic key (`{{lookup person field}}`), only sees the fields the
+  template names elsewhere: in a path, or as a literal lookup key such as
+  `{{lookup person "city"}}` (see [typed contexts](#c-typed-structs-as-contexts)).
+  JSON objects have all their members.
 
 ## Design
 
