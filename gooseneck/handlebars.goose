@@ -1,5 +1,4 @@
 import std;
-import regex;
 import os;
 import math;
 import json;
@@ -326,18 +325,9 @@ fn _control_whitespace(input: const u8[:], tokens: Token[>..]&) {
 }
 
 
-const WORDS = regex::compile("(?:true|false|null|undefined)");
-
 const INVALID_IDENTIFIER_CHARS: u8[27] = ['!', '"', '#', '%', '&','\'', '(', ')', '*', 
                                           '+', ',', '.', '/', ';', '<', '=', '>', '@', 
                                           '[', '\\', ']', '^', '`', '{', '|', '}', '~'];
-
-fn keyword_past_start(path: const u8[:]) -> bool {
-    regex::each_match(WORDS, path) { start, end =>
-        if start != 0 { return true; }
-    };
-    return false;
-}
 
 // The navigation step at the start of path: how many bytes it takes, and
 // whether it climbs to the parent frame. ../ and .. climb; ./, ., this,
@@ -394,39 +384,247 @@ fn _is_data_path(path: const u8[:]) -> bool {
     return false;
 }
 
-// Validates path to avoid traversing invalid paths.
-// The paths pass https://handlebarsjs.com/guide/expressions.html
-fn _validate_path(path: const u8[:]) -> bool, u8[:] {
-    guard path.len > 0 else { return false, "Has 0 length"; }
-    if starts_with(path, "@") {
-        guard _is_data_path(path) else { return false, "Unknown data variable: only @index, @key, @first and @last, after any ../"; }
-        return true, "";
-    }
-    let body = _strip_navigation(path);
-    if body.len == 0 || body == "." || body == ".." { return true, ""; }
-    guard !keyword_past_start(body) else {
-        return false, "true, false, null, or undefined allowed only at the beginning of the path";
-    };
-    var escape_open = false;
-    var index: i64 = 0;
+// ---------------------------------------------------------------------------
+// Tag contents.
+//
+// _lex_tag splits the body of one tag, the text between its braces (and
+// after a block's '#' or an {{else}}), into TagTokens: ranges of the
+// template, never copies. Whitespace only separates tokens; each token
+// says whether whitespace came before it, which is what splits a call
+// into its words: {{helper a.b (sub x) key=1}} is the words helper, a.b,
+// (sub x) and key=1. Paths are checked and calls parsed from the tokens,
+// never from the text again.
 
-    let parts = split(body, '.');
-    
-    for part in parts {
-        // part is a escaped []. Just checks it is ending with ]
-        if starts_with(part, "[") {
-            guard ends_with(part, "]") else { return false, "Invalid characted in segment"; }
+enum TagTokenKind {
+    // A name segment: name, this, -x, [any text].
+    Ident,
+    // '.' right after a name segment: a.b.
+    Sep,
+    // '/': ../name, ./name, this/name.
+    Slash,
+    // "." and ".." anywhere but right after a segment.
+    Dot,
+    DotDot,
+    // '@', the start of a data variable.
+    Data,
+    // "..." or '...', quotes included, and one that never closes.
+    String,
+    UnclosedString,
+    // Literals, only at the start of a word and only when the word ends
+    // there: 1, -2.5, true, false, null, undefined. true.name is a path.
+    Number,
+    Bool,
+    Null,
+    Equals,
+    LParen,
+    RParen,
+    // The "as" of a trailing as |a b| (see _mark_block_params).
+    As,
+    Pipe,
+    // Any other byte that cannot be in a name, such as '!'.
+    Invalid,
+}
+
+struct TagToken { kind: TagTokenKind, start: i64, end: i64, spaced: bool }
+
+// The text of a token.
+fn _token_text(source: const u8[:], token: TagToken) -> const u8[:] {
+    return source[token.start..token.end];
+}
+
+// Whether a word ends at source[at], so a literal may end there.
+fn _literal_ends(source: const u8[:], at: i64, stop: i64) -> bool {
+    return at == stop || _is_space(source[at]) || source[at] == ')';
+}
+
+// Where the name segment that starts at source[at] ends.
+fn _ident_end(source: const u8[:], at: i64, stop: i64) -> i64 {
+    var p = at;
+    while p < stop && !_is_space(source[p]) && !INVALID_IDENTIFIER_CHARS.contains(source[p]) { p += 1; }
+    return p;
+}
+
+// The literal that starts a word at source[at], if one does: its kind and
+// end. Ident when the word holds no literal.
+fn _literal_at(source: const u8[:], at: i64, stop: i64) -> TagTokenKind, i64 {
+    let c = source[at];
+    let digit_next = at + 1 < stop && source[at + 1] >= '0' && source[at + 1] <= '9';
+    if (c >= '0' && c <= '9') || (c == '-' && digit_next) {
+        let number = json::scan_number(source[..stop], at);
+        if number.end > at && _literal_ends(source, number.end, stop) { return TagTokenKind.Number, number.end; }
+    }
+    let end = _ident_end(source, at, stop);
+    if _literal_ends(source, end, stop) {
+        let word = source[at..end];
+        if word == "true" || word == "false" { return TagTokenKind.Bool, end; }
+        if word == "null" || word == "undefined" { return TagTokenKind.Null, end; }
+    }
+    return TagTokenKind.Ident, end;
+}
+
+// Where a quoted string that opens at source[at] ends, past its closing
+// quote, and whether it closes before stop.
+fn _string_end(source: const u8[:], at: i64, stop: i64) -> i64, bool {
+    var p = at + 1;
+    while p < stop && source[p] != source[at] { p += 1; }
+    guard p < stop else { return stop, false; }
+    return p + 1, true;
+}
+
+// The kind and end of the token at source[at]. after_segment says whether
+// a name segment ends right before it, word_start whether it starts a word.
+fn _lex_one(source: const u8[:], at: i64, stop: i64, after_segment: bool, word_start: bool) -> TagTokenKind, i64 {
+    let c = source[at];
+    if c == '"' || c == '\'' {
+        let end, closed = _string_end(source, at, stop);
+        if closed { return TagTokenKind.String, end; }
+        return TagTokenKind.UnclosedString, end;
+    }
+    if c == '(' { return TagTokenKind.LParen, at + 1; }
+    if c == ')' { return TagTokenKind.RParen, at + 1; }
+    if c == '=' { return TagTokenKind.Equals, at + 1; }
+    if c == '|' { return TagTokenKind.Pipe, at + 1; }
+    if c == '@' { return TagTokenKind.Data, at + 1; }
+    if c == '/' { return TagTokenKind.Slash, at + 1; }
+    if c == '.' {
+        if after_segment { return TagTokenKind.Sep, at + 1; }
+        if at + 1 < stop && source[at + 1] == '.' { return TagTokenKind.DotDot, at + 2; }
+        return TagTokenKind.Dot, at + 1;
+    }
+    if c == '[' {
+        let close = find(source[at..stop], "]");
+        if close >= 0 { return TagTokenKind.Ident, at + close + 1; }
+        return TagTokenKind.Invalid, at + 1;
+    }
+    if INVALID_IDENTIFIER_CHARS.contains(c) { return TagTokenKind.Invalid, at + 1; }
+    if word_start { return _literal_at(source, at, stop); }
+    return TagTokenKind.Ident, _ident_end(source, at, stop);
+}
+
+// Whether a token may start a word's literal: the first token, one after
+// whitespace, or one right after '=' or '('.
+fn _starts_word(tokens: const TagToken[>..<]&, spaced: bool) -> bool {
+    guard tokens.len > 0 && !spaced else { return true; }
+    let kind = tokens[tokens.len - 1].kind;
+    return kind == TagTokenKind.Equals || kind == TagTokenKind.LParen;
+}
+
+// Whether the last token is a name segment that ends right where the next
+// token starts.
+fn _segment_before(tokens: const TagToken[>..<]&, spaced: bool) -> bool {
+    guard tokens.len > 0 && !spaced else { return false; }
+    let kind = tokens[tokens.len - 1].kind;
+    return kind == TagTokenKind.Ident || kind == TagTokenKind.Number || kind == TagTokenKind.Bool || kind == TagTokenKind.Null;
+}
+
+// Marks the "as" of a block's trailing block parameters, as |a b|: the
+// tokens end in '|', the '|' before that one comes right after an "as"
+// that is a word of its own, and that word is not the first.
+fn _mark_block_params(source: const u8[:], tokens: TagToken[>..<]&) {
+    guard tokens.len >= 3 && tokens[tokens.len - 1].kind == TagTokenKind.Pipe else { return; }
+    var bar = tokens.len - 2;
+    while bar >= 0 && tokens[bar].kind != TagTokenKind.Pipe { bar -= 1; }
+    guard bar >= 2 else { return; }
+    let as_word = tokens[bar - 1];
+    guard as_word.kind == TagTokenKind.Ident && as_word.spaced && _token_text(source, as_word) == "as" else { return; }
+    tokens[bar - 1].kind = TagTokenKind.As;
+}
+
+// Splits source[start..stop], the body of a tag, into tokens, replacing
+// what tokens held.
+fn _lex_tag(source: const u8[:], start: i64, stop: i64, tokens: TagToken[>..<]&) {
+    tokens.clear();
+    var p = start;
+    var spaced = false;
+    while p < stop {
+        if _is_space(source[p]) {
+            spaced = true;
+            p += 1;
             continue;
         }
-        // not a escaped, let's check it is a valid identifier  
-        var index = 0;
-        while index < part.len {
-            guard !INVALID_IDENTIFIER_CHARS.contains(part[index]) else { return false, "Invalid characted in segment"; }
-            index += 1;
-        }
+        let kind, end = _lex_one(source, p, stop, _segment_before(tokens, spaced), _starts_word(tokens, spaced));
+        tokens.push(TagToken { kind: kind, start: p, end: end, spaced: spaced });
+        spaced = false;
+        p = end;
     }
+    _mark_block_params(source, tokens);
+}
 
-    return true, "";
+// ---------------------------------------------------------------------------
+// Paths: https://handlebarsjs.com/guide/expressions.html
+
+const INVALID_SEGMENT = "Invalid characted in segment";
+const KEYWORD_IN_PATH = "true, false, null, or undefined allowed only at the beginning of the path";
+const UNKNOWN_DATA = "Unknown data variable: only @index, @key, @first and @last, after any ../";
+
+// Whether a token can be one segment of a path: a name, or a word the lexer
+// read as a literal (a path may start with true: true.name).
+fn _is_segment(token: TagToken) -> bool {
+    let kind = token.kind;
+    return kind == TagTokenKind.Ident || kind == TagTokenKind.Number || kind == TagTokenKind.Bool || kind == TagTokenKind.Null;
+}
+
+// Whether a segment's text is one of the literal words.
+fn _is_keyword(text: const u8[:]) -> bool {
+    return text == "true" || text == "false" || text == "null" || text == "undefined";
+}
+
+// Whether tokens[i] is a navigation step: .., . or this.
+fn _is_navigation(source: const u8[:], tokens: const TagToken[>..<]&, i: i64) -> bool {
+    let token = tokens[i];
+    if token.kind == TagTokenKind.DotDot || token.kind == TagTokenKind.Dot { return true; }
+    return token.kind == TagTokenKind.Ident && _token_text(source, token) == "this";
+}
+
+// Where the field segments of the path tokens[from..to] start: past its
+// leading navigation, ../, ./, this. or this/, any number of them, and a
+// last .., . or this.
+fn _skip_navigation(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> i64 {
+    var i = from;
+    while i < to && _is_navigation(source, tokens, i) {
+        i += 1;
+        let separated = i < to && (tokens[i].kind == TagTokenKind.Slash || tokens[i].kind == TagTokenKind.Sep);
+        guard separated else { break; }
+        i += 1;
+    }
+    return i;
+}
+
+// What is wrong with the path tokens[from..to], or "" when nothing is: it
+// must be a data variable (@, any ../, a data name), or navigation then
+// name segments joined by '.'. A literal word is a segment only first.
+fn _path_error(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> const u8[:] {
+    guard to > from else { return "Has 0 length"; }
+    if tokens[from].kind == TagTokenKind.Data {
+        guard _is_data_path(source[tokens[from].start..tokens[to - 1].end]) else { return UNKNOWN_DATA; }
+        return "";
+    }
+    let body = _skip_navigation(source, tokens, from, to);
+    var i = body;
+    while i < to {
+        let later = i > body;
+        if later && _is_segment(tokens[i]) && _is_keyword(_token_text(source, tokens[i])) { return KEYWORD_IN_PATH; }
+        i += 1;
+    }
+    i = body;
+    while i < to {
+        let wants_segment = (i - body) % 2 == 0;
+        let fits = if wants_segment { _is_segment(tokens[i]) } else { tokens[i].kind == TagTokenKind.Sep };
+        guard fits else { return INVALID_SEGMENT; }
+        i += 1;
+    }
+    let ends_in_sep = to > body && (to - body) % 2 == 0;
+    guard !ends_in_sep else { return INVALID_SEGMENT; }
+    return "";
+}
+
+// Checks a path on its own: whether it is valid, and if not, why (see
+// _path_error).
+fn _validate_path(path: const u8[:]) -> bool, u8[:] {
+    let tokens: TagToken[>..<] = [];
+    _lex_tag(path, 0, path.len, tokens);
+    let why = _path_error(path, tokens, 0, tokens.len);
+    return why.len == 0, why;
 }
 
 // Splits a template into Text, Expression, Comment and raw block tokens,
