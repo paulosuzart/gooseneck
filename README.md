@@ -71,14 +71,14 @@ everything it supports: the test suites check it case by case.
   arguments find (`this`, a param, an item), never a computed value.
 - `@root`. Any `@name` other than `index`, `key`, `first` and `last` is a
   compile error.
-- User helper results that are objects or arrays. Results are scalars for now
+- User helper answers that are objects or arrays. Answers are scalars for now
   (the built-in `lookup` is the exception).
 - A user helper named `lookup` is never called: the built-in wins
   (handlebars.js lets `registerHelper` replace it). A `lookup` without exactly
   two params renders nothing (handlebars.js throws).
 - `{{this}}` on an object or array writes nothing (handlebars.js writes
   `[object Object]` or a comma-joined list).
-- A helper the dispatcher doesn't know renders nothing and is falsy
+- A call no registered helper answers renders nothing and is falsy
   (handlebars.js throws `Missing helper`).
 - Iterating a *typed struct* as an object, or looking up one of its fields
   with a dynamic key (`{{lookup person field}}`), only sees the fields the
@@ -122,7 +122,6 @@ fn main() {
 | `get_engine(template)` | Compiles template text. |
 | `load_engine(path)` | Reads and compiles a template file. Errors are prefixed with the path. |
 | `get_engine(template, blocks)`, `load_engine(path, blocks)` | The same, with your block helpers: their names come from the registrations. |
-| `get_engine(template, config)`, `load_engine(path, config)` | The same, with a `Config` that lists the block helper names by hand. |
 
 Either way you get an `Engine`. When the template is malformed,
 `engine.error` holds the message and every render returns it instead of
@@ -147,32 +146,31 @@ let file_err = gooseneck::render_json_file(engine, "context.json", out);
 ### Helpers
 
 Every render function also takes your helpers as one more, last argument.
-That can be a named function that registers each helper, the way
+That's one function taking a `gooseneck::HelperContext`, the call being
+rendered, in which each helper is registered the way
 [plod](https://github.com/kaitk/plod) registers routes:
 
 ```goose
-fn shout(args: const gooseneck::Args&) -> json::Value {
-    match gooseneck::param(args, 0) {
+fn shout(cx: gooseneck::HelperContext&) -> json::Value {
+    match gooseneck::param(cx, 0) {
         Str s => {
-            let start = args.text.len;
+            let start = cx.text.len;
             for c in s.s {
-                if c >= 'a' && c <= 'z' { args.text.push(c - 32); } else { args.text.push(c); }
+                if c >= 'a' && c <= 'z' { cx.text.push(c - 32); } else { cx.text.push(c); }
             }
-            return json::Value.Str { s: args.text[start..] };
+            return json::Value.Str { s: cx.text[start..] };
         },
         _ => { return json::Value.Null; },
     }
 }
 
-fn helpers(name: const u8[:], args: const gooseneck::Args&) -> gooseneck::Result {
-    return gooseneck::helpers(args) { call =>
-        gooseneck::helper(call, "shout") { return gooseneck::known(shout(args)); };
-        gooseneck::helper(call, "older") {
-            match gooseneck::param(args, 0) {
-                Int year => { return gooseneck::known(json::Value.Bool { v: year.v < 1900 }); },
-                _ => { return gooseneck::known(json::Value.Bool { v: false }); },
-            }
-        };
+fn helpers(cx) {
+    gooseneck::helper(cx, "shout") { gooseneck::answer(cx, shout(cx)); };
+    gooseneck::helper(cx, "older") {
+        match gooseneck::param(cx, 0) {
+            Int year => { gooseneck::answer(cx, json::Value.Bool { v: year.v < 1900 }); },
+            _ => { gooseneck::answer(cx, json::Value.Bool { v: false }); },
+        }
     };
 }
 
@@ -180,84 +178,81 @@ let page = gooseneck::get_engine("{{#each books}}{{shout title}}{{#if (older yea
 gooseneck::render_into(page, shelf, out, helpers);   // FRANKENSTEIN (classic); DUNE;
 ```
 
-Each `helper(call, "name") { ... }` runs its block when the template calls
-`name`. A `return` in a block returns from the function it's written in
-(spec §7.6), so the first registration that returns answers the call. A
-block that ends without returning passes the call on to the registrations
-after it, and when none of them answers, `helpers` returns `unknown()`. The
-function keeps the dispatcher signature, so it's passed like any other.
-A hand-written `if name == "shout" { ... }` chain that ends in
-`return gooseneck::unknown();` works too.
+`cx` is untyped, as in a plod handler (`fn handle(cx)`). The renderer
+passes the context with `&` so that a block gets it by reference, not a
+copy, and a function that types it as `gooseneck::HelperContext&` would
+turn that `&` into a "redundant &" compiler warning.
 
-Or it can be a block, which can keep state in your locals:
+`helper(cx, "shout") { ... }` runs its block when the template calls
+`shout`, and the block answers with `answer(cx, value)`. Nothing is
+returned: like a plod handler, the helper fills in the context it was
+given. The first registration that answers wins. A block that doesn't
+answer leaves the call to the registrations after it, and a call nobody
+answers renders nothing.
+
+The helpers can also be a block, which can keep state in your locals:
 
 ```goose
 let counted = gooseneck::get_engine("{{owner}}{{#each books}} {{next}}{{/each}}");
 var calls: i64 = 0;
-gooseneck::render_into(counted, shelf, out) { name, args =>
-    if name == "next" {
+gooseneck::render_into(counted, shelf, out) { cx =>
+    gooseneck::helper(cx, "next") {
         calls += 1;
-        gooseneck::known(json::Value.Int { v: calls })
-    } else {
-        gooseneck::unknown()
-    }
+        gooseneck::answer(cx, json::Value.Int { v: calls });
+    };
 };   // Ada 1 2
 ```
 
-A helper reads its resolved arguments with `param(args, i)` (Null past the end),
-`param_count(args)` and `hash_arg(args, "key")` (Null when absent). It
-returns `known(value)` or `unknown()`. When a helper makes new text, it
-appends it to `args.text`, a buffer that lives until the render ends, and
-returns a slice of it. A block's parameters are copies, so a block can't
-return text it read through `args`. It can return scalars, literals, or text
-in a buffer you own. A named function has no such limit.
+The context holds everything about the call. `cx.name` is the helper being
+called. `param(cx, i)` (Null past the end), `param_count(cx)` and
+`hash_arg(cx, "key")` (Null when absent) read the resolved arguments. When
+a helper makes new text, it appends it to `cx.text`, a buffer that lives
+until the render ends, and answers with a slice of it.
 
 **Helper or field?** As in handlebars.js, a bare `{{name}}` (or
-`{{{name}}}`) asks your helpers first: if they know `name`, its result is
-written, even when it is Null; otherwise `name` is looked up as a field. So
-a dispatcher must return `unknown()` for every name it doesn't have, or it
-hides the fields. To force the field, write `{{./name}}` or
-`{{this.name}}`. Dotted paths (`{{user.name}}`), `../` paths, data variables,
-block parameters and every helper *argument* are always paths.
+`{{{name}}}`) asks your helpers first. If one answers, its value is
+written, even when it is Null. Otherwise `name` is looked up as a field.
+To force the field, write `{{./name}}` or `{{this.name}}`. Dotted paths
+(`{{user.name}}`), `../` paths, data variables, block parameters and every
+helper *argument* are always paths.
 
-The cost is one dispatcher call, with its name comparisons, per bare
+The cost is one call to your function, with its name comparisons, per bare
 mustache rendered, and only when you pass helpers. The render functions
-without helpers pass the built-in no-op dispatcher, a static call that
-returns `unknown()`. Nothing else changes.
+without helpers pass a built-in function that answers nothing. Nothing
+else changes.
 
-There is no list of expression helpers in the `Config`. handlebars.js also
-decides a bare name at runtime by default (its `knownHelpers` list is an
-optimization), and a list here would repeat the dispatcher's `if` chain and
-could drift from it. Block helpers do need the list, because an unknown
-block has to fail at compile time.
+Expression helpers have no list of names. handlebars.js also decides a
+bare name at runtime by default (its `knownHelpers` list is an
+optimization). Block helpers do have one, because an unknown block has to
+fail at compile time. It comes from the registrations (see below).
 
-`test/helpers.goose` and `examples/http/helpers.goose` have more examples.
+`test/helpers.goose`, `test/registration.goose` and
+`examples/http/helpers.goose` have more examples.
 
 ### Block helpers
 
-Block helpers are a second function, passed after the helpers, and they're
-registered the same way. Give the same function to `get_engine` (or
-`load_engine`) as well. The engine reads the registered names from it, like
-handlebars.js's `knownHelpers`, so `{{#typo}}` fails at compile time with
-`unknown block helper #typo`, and the list can't drift from the helpers:
+Block helpers are a second function, passed after the helpers. It takes
+the same context and registers each helper with `block_helper`. Give the
+same function to `get_engine` (or `load_engine`) as well. The engine reads
+the registered names from it, like handlebars.js's `knownHelpers`. So
+`{{#typo}}` fails at compile time with `unknown block helper #typo`, and
+the list can't drift from the helpers:
 
 ```goose
-fn blocks<B>(name: const u8[:], args: const gooseneck::Args&, out: u8[>..]&) -> bool {
-    return gooseneck::block_helpers(args) { call =>
-        gooseneck::block_helper(call, "bold") {
-            out.append("<b>");
-            B(gooseneck::this());               // the body, on the block's context
-            out.append("</b>");
-        };
-        gooseneck::block_helper(call, "list") {
-            out.append("<ul>");
-            for k in gooseneck::length(gooseneck::param(args, 0)) {
-                out.append("<li>");
-                B(gooseneck::element(0, k));    // the body on item k of param 0
-                out.append("</li>");
-            }
-            out.append("</ul>");
-        };
+fn blocks<B>(cx) {
+    gooseneck::block_helper(cx, "bold") {
+        cx.out.append("<b>");
+        B(gooseneck::this());               // the body, on the block's context
+        cx.out.append("</b>");
+    };
+    gooseneck::block_helper(cx, "list") {
+        cx.out.append("<ul>");
+        for k in gooseneck::length(gooseneck::param(cx, 0)) {
+            cx.out.append("<li>");
+            B(gooseneck::element(0, k));    // the body on item k of param 0
+            cx.out.append("</li>");
+        }
+        cx.out.append("</ul>");
     };
 }
 
@@ -266,14 +261,12 @@ gooseneck::render_into(engine, shelf, out, helpers, blocks);
 // <ul><li><b>Frankenstein</b> #0</li><li><b>Dune</b> #1</li></ul>
 ```
 
-A block helper's block needs no `return`: the matching registration runs and
-answers the call. To get the names, `get_engine` calls the function once
-with `args.listing` set. Each `block_helper` then adds its name and skips
-its block, so nothing is written and no body runs. A hand-written
-`if name == "bold" { ...; return true; }` chain still works. Pass its names
-in a `Config { block_helpers: ["bold", "list"] }` instead.
+The matching registration's block runs, and that answers the call. To get
+the names, `get_engine` calls the function once with `cx.listing` set.
+Each `block_helper` then adds its name and skips its block, so nothing is
+written and no body runs.
 
-The helper writes straight into `out`, the render's own buffer, and calls
+The helper writes straight into `cx.out`, the render's own buffer, and calls
 `B`, its body, as often as it likes. What it passes says which context the
 body runs on:
 
@@ -285,15 +278,15 @@ body runs on:
 | `B(inverse(...))` | the part after `{{else}}`, on any of the above |
 
 `B` returns whether that context was there (a missing param, a scalar or
-an item past the end walk nothing). Arguments and hash come through `args`
+an item past the end walk nothing). Arguments and hash come through `cx`
 as for helpers, and `append_escaped(out, text)` writes text escaped as
 `{{value}}` would. Block parameters (`as |item key|`) work on any block
 helper and name the body's context and the item's `@key`.
 
 The body runs inside the render's recursive walk, so Goose's recursion
 rules apply to the helper (spec §7.8): no growable local, such as a
-`u8[>..]` buffer, may be in scope where it calls `B`. Build text in `out`
-or `args.text` instead. Each `B` call finds its context again from the
+`u8[>..]` buffer, may be in scope where it calls `B`. Build text in `cx.out`
+or `cx.text` instead. Each `B` call finds its context again from the
 arguments, so `element(i, k)` steps over `k` items: an iterator over `n`
 items costs about n²/2 steps, which only matters for long lists.
 `test/blocks.goose` has a helper of every kind.
@@ -345,7 +338,7 @@ it and the latest results.
 
 ## Design
 
-### (a) Helpers are one static dispatch function
+### (a) Helpers are one static function that fills in a context
 
 Goose has no runtime function pointers: a function value is a compile-time
 argument, and it can't be stored, returned or put in data (spec §7.6). So
@@ -353,18 +346,39 @@ gooseneck has no helper registry. You pass one function, and the renderer
 calls it directly. That makes each helper call a direct, inlinable call,
 specialized for your function, with nothing to register or look up at
 runtime. A block can capture your locals, so per-render state needs no
-extra API. The price is that the name match happens inside your function.
-`helpers`/`helper` and `block_helpers`/`block_helper` give it the shape of
-plod's routes: one registration per helper, built from trailing blocks
-that are inlined into your function, so it still compiles to a chain of
-comparisons and direct calls. Renders without helpers use a built-in no-op
-dispatcher that knows no names.
+extra API. Renders without helpers use a built-in function that answers
+nothing.
 
-The registrations pass `call` (the `Args` itself, by reference) rather
-than the name. The block helpers run inside the render's recursion, and
-there a block's parameter can't be a slice or a struct that holds one
-(§7.8), so the called name travels in `args.name`. Expression helpers use
-the same shape so that both read alike.
+The name match happens inside your function. `helper` and `block_helper`
+give it the shape of plod's routes: one registration per helper, built from
+trailing blocks that are inlined into your function. It still compiles to a
+chain of name comparisons and direct calls.
+
+The function takes one `HelperContext` and fills it in, the way a plod
+handler takes `cx` and answers through it. It doesn't return a result, for
+three reasons:
+
+- **No `return` in your code.** A `return` in a trailing block returns from
+  the function the block is written in (§7.6). A returned result would make
+  every registration end in `return ...`, and a forgotten one would fall
+  through. With `answer(cx, value)` the context records the answer, and
+  later registrations see it and skip.
+- **One place for the call.** The name, the arguments, the scratch text,
+  the output and the answer all live in the context. The function has no
+  separate `name` and `args` parameters that repeat what the context holds.
+- **It survives the recursion.** Block helpers run inside the render's
+  recursive walk, where references may only be passed down, never stored
+  in a struct built there (§7.8). A per-call struct holding the name, or
+  the name passed as a block parameter, is rejected there. So the
+  renderer builds the context once, outside the walk, fills in each call's
+  name and arguments, and passes it down by reference. A block helper gets
+  a copy, because its body makes calls of its own.
+
+Your function's `cx` is untyped, as in plod. The renderer passes the
+context with `&` so that a block given as helpers gets it by reference
+(a block's parameter is otherwise a copy, and its answer would be lost).
+Against a parameter typed `HelperContext&`, that `&` is a "redundant &"
+compiler warning (§4.1). Against an untyped one it isn't.
 
 Block helpers are a separate function for the same reason, plus one more:
 a block helper gets its body, `B`, as a static function value too. The
