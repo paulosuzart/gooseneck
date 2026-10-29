@@ -146,9 +146,9 @@ let file_err = gooseneck::render_json_file(engine, "context.json", out);
 ### Helpers
 
 Every render function also takes your helpers as one more, last argument.
-That's one function taking a `gooseneck::HelperContext`, the call being
-rendered, in which each helper is registered the way
-[plod](https://github.com/kaitk/plod) registers routes:
+The simplest way is a trailing block on the render call, in which each
+helper is registered the way [plod](https://github.com/kaitk/plod)
+registers routes:
 
 ```goose
 fn shout(cx: gooseneck::HelperContext&) -> json::Value {
@@ -164,25 +164,21 @@ fn shout(cx: gooseneck::HelperContext&) -> json::Value {
     }
 }
 
-fn helpers(cx) {
-    gooseneck::helper(cx, "shout") { gooseneck::answer(cx, shout(cx)); };
-    gooseneck::helper(cx, "older") {
-        match gooseneck::param(cx, 0) {
-            Int year => { gooseneck::answer(cx, json::Value.Bool { v: year.v < 1900 }); },
-            _ => { gooseneck::answer(cx, json::Value.Bool { v: false }); },
-        }
-    };
+fn older(cx: gooseneck::HelperContext&) -> json::Value {
+    match gooseneck::param(cx, 0) {
+        Int year => { return json::Value.Bool { v: year.v < 1900 }; },
+        _ => { return json::Value.Bool { v: false }; },
+    }
 }
 
 let page = gooseneck::get_engine("{{#each books}}{{shout title}}{{#if (older year)}} (classic){{/if}}; {{/each}}");
-gooseneck::render_into(page, shelf, out, helpers);   // FRANKENSTEIN (classic); DUNE;
+gooseneck::render_into(page, shelf, out) { cx =>
+    gooseneck::helper(cx, "shout") { gooseneck::answer(cx, shout(cx)); };
+    gooseneck::helper(cx, "older") { gooseneck::answer(cx, older(cx)); };
+};   // FRANKENSTEIN (classic); DUNE;
 ```
 
-`cx` is untyped, as in a plod handler (`fn handle(cx)`). The renderer
-passes the context with `&` so that a block gets it by reference, not a
-copy, and a function that types it as `gooseneck::HelperContext&` would
-turn that `&` into a "redundant &" compiler warning.
-
+`cx` is the call being rendered, a `gooseneck::HelperContext`.
 `helper(cx, "shout") { ... }` runs its block when the template calls
 `shout`, and the block answers with `answer(cx, value)`. Nothing is
 returned: like a plod handler, the helper fills in the context it was
@@ -190,7 +186,7 @@ given. The first registration that answers wins. A block that doesn't
 answer leaves the call to the registrations after it, and a call nobody
 answers renders nothing.
 
-The helpers can also be a block, which can keep state in your locals:
+The block can keep state in your locals:
 
 ```goose
 let counted = gooseneck::get_engine("{{owner}}{{#each books}} {{next}}{{/each}}");
@@ -202,6 +198,24 @@ gooseneck::render_into(counted, shelf, out) { cx =>
     };
 };   // Ada 1 2
 ```
+
+To share the same helpers between several render calls, put the
+registrations in a named function and pass it instead of the block:
+
+```goose
+fn book_helpers(cx) {
+    gooseneck::helper(cx, "shout") { gooseneck::answer(cx, shout(cx)); };
+    gooseneck::helper(cx, "older") { gooseneck::answer(cx, older(cx)); };
+}
+
+gooseneck::render_into(page, shelf, out, book_helpers);
+```
+
+Leave its `cx` untyped, as in a plod handler (`fn handle(cx)`). The
+renderer passes the context with `&` so that a block gets it by reference,
+not a copy, and a function that types it as `gooseneck::HelperContext&`
+would turn that `&` into a "redundant &" compiler warning. Functions that
+only take the context from a registration, like `shout`, can type it.
 
 The context holds everything about the call. `cx.name` is the helper being
 called. `param(cx, i)` (Null past the end), `param_count(cx)` and
@@ -226,13 +240,16 @@ bare name at runtime by default (its `knownHelpers` list is an
 optimization). Block helpers do have one, because an unknown block has to
 fail at compile time. It comes from the registrations (see below).
 
-`test/helpers.goose`, `test/registration.goose` and
-`examples/http/helpers.goose` have more examples.
+`test/helpers.goose`, `test/registration.goose` and `examples/http` have
+more examples.
 
 ### Block helpers
 
 Block helpers are a second function, passed after the helpers. It takes
-the same context and registers each helper with `block_helper`. Give the
+the same context and registers each helper with `block_helper`. It has to
+be a named function: it's generic over its body `B`, which a block can't
+be. A render call takes one trailing block, the last argument, so with
+block helpers the expression helpers are a named function too. Give the
 same function to `get_engine` (or `load_engine`) as well. The engine reads
 the registered names from it, like handlebars.js's `knownHelpers`. So
 `{{#typo}}` fails at compile time with `unknown block helper #typo`, and
@@ -257,7 +274,7 @@ fn blocks<B>(cx) {
 }
 
 let engine = gooseneck::get_engine("{{#list books as |book i|}}{{#bold}}{{book.title}}{{/bold}} #{{i}}{{/list}}", blocks);
-gooseneck::render_into(engine, shelf, out, helpers, blocks);
+gooseneck::render_into(engine, shelf, out, book_helpers, blocks);
 // <ul><li><b>Frankenstein</b> #0</li><li><b>Dune</b> #1</li></ul>
 ```
 
@@ -320,9 +337,11 @@ goose build main.goose -o build/gooseneck && build/gooseneck template.hbs contex
 **HTTP example.** `examples/http` serves a page rendered from
 `hello.html.hbs` with [goose-http](https://github.com/kaitk/goose-http) and
 [plod](https://github.com/kaitk/plod). Each worker compiles its `Engine` once
-at startup. The page uses `#if`, `#with`, `#each`, and two registered helpers:
-`ordinal` and `now`, the render time in Unix seconds.
-Build it and run the binary:
+at startup. The page uses `#if`, `#with`, `#each`, and two helpers registered
+inline on `render_into`: `ordinal` and `now`, the render time in Unix
+seconds. Build it and run the binary (`goose run` can't run it, since the
+JIT has no threads); [examples/http/README.md](examples/http/README.md) has
+the details:
 
 ```sh
 goose build examples/http/main.goose -o examples/http/hello
