@@ -1,7 +1,8 @@
 #!/bin/sh
 # Runs every program in test/ and compares its stdout with test/expected/<name>.out.
 # Goose v2026.3 has assert, and no goose test command. A failed assert aborts
-# the program. GOOSE selects the compiler; otherwise the goose on PATH.
+# the program. Then scripts/test_cli.sh checks the CLI. GOOSE selects the
+# compiler; otherwise the goose on PATH.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -27,5 +28,8 @@ for src in "$root"/test/*.goose; do
     fi
     rm -f "$out" "$err"
 done
+
+echo "== cli"
+GOOSE="$goose" "$root/scripts/test_cli.sh" || fail=1
 
 exit "$fail"

@@ -267,15 +267,41 @@ The suites cover the engine API, paths, values, rendering, JSON, whitespace
 control, `#if` and `#unless`, `#each`, `lookup`, helpers, block helpers,
 and registered helpers. Expected outputs
 come from handlebars.js 4.7.10, rendering the same template and data.
+Then `scripts/test_cli.sh` builds the CLI and checks it (see below).
 
-**CLI.** `main.goose` renders a template file with a JSON file as its context:
+**CLI.** `main.goose` is the `gooseneck` command. `gooseneck render`
+renders a template file with a JSON file as its context, or with every
+JSON file in a folder:
 
 ```sh
-goose run main.goose -- test/fixtures/greeting.hbs test/fixtures/greeting.json
+goose build main.goose -o build/gooseneck      # build/ is ignored by git
+
+build/gooseneck render test/fixtures/greeting.hbs test/fixtures/greeting.json
 # hello John, 21! Springfield (John)
 
-goose build main.goose -o build/gooseneck && build/gooseneck template.hbs context.json
+build/gooseneck render test/fixtures/cli/card.html.hbs test/fixtures/cli/people -o build/out
+# wrote build/out/ana.html
+# wrote build/out/bo.html
+# gooseneck: test/fixtures/cli/people/broken.json: json: expected a key at byte 15
 ```
+
+- **One JSON file**: the result goes to stdout, followed by a newline.
+- **A folder**: the template is compiled once and rendered with each
+  `*.json` file in the folder (not its subfolders), in name order. Each
+  result is written as it is to its own file, named after the JSON file
+  with the template's extension once a trailing `.hbs` is dropped:
+  `page.html.hbs` and `ana.json` give `ana.html`; a template named only
+  `x.hbs` gives `ana.out`. The files go into `-o <dir>` (created if
+  missing) or, without `-o`, beside the JSON files. Each written file is
+  reported on stderr as `wrote <path>`.
+- **Errors**: a template error stops everything. In a folder, a file that
+  fails is reported on stderr with its path and the others still render.
+  The exit code is 0 when everything rendered, 1 when anything failed, and
+  2 for wrong arguments, which print the usage.
+
+`goose run main.goose -- render <template> <json>` works too, with the
+compiler's progress on stderr. `scripts/test_cli.sh`, which
+`scripts/test.sh` runs, builds the CLI and checks these cases.
 
 **HTTP example.** `examples/http` serves a page rendered from
 `hello.html.hbs` with [goose-http](https://github.com/kaitk/goose-http) and
@@ -517,9 +543,10 @@ and which parameter. Rendering reads it straight off the stack.
 
 ```
 gooseneck/handlebars.goose   the engine: tokenizer, tag lexer, parser, conversion, renderer
-main.goose                   CLI: template + JSON file -> stdout
+main.goose                   CLI: gooseneck render <template> <JSON file or folder>
 examples/http/               the engine inside an HTTP service
 test/                        test suites, fixtures and expected outputs
-scripts/test.sh              runs the suites
+scripts/test.sh              runs the suites, then scripts/test_cli.sh
+scripts/test_cli.sh          builds the CLI and checks gooseneck render
 benchmark/                   gooseneck vs Go vs Python
 ```
