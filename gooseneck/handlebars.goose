@@ -27,8 +27,29 @@ enum TokenType {
     RawClose,
 }
 
+// What an Expression tag is, read from the start of its body once, when the
+// tag is scanned: {{#helper ...}} opens a block, {{/helper}} closes one,
+// {{else}} starts an inverse and {{else helper ...}} chains a block onto
+// it. {{^...}} is not supported; it is told apart only so that its line can
+// be standalone, as handlebars.js's would be. Anything else is a Mustache:
+// a path or a helper call.
+enum TagKind { Mustache, Open, Close, Else, ElseChain, Inverse }
+
+// The kind of a tag whose trimmed body is body (see TagKind).
+fn _tag_kind(body: const u8[:]) -> TagKind {
+    guard body.len > 0 else { return TagKind.Mustache; }
+    if body[0] == '#' { return TagKind.Open; }
+    if body[0] == '/' { return TagKind.Close; }
+    if body[0] == '^' { return TagKind.Inverse; }
+    if body == "else" { return TagKind.Else; }
+    if body.len > 4 && starts_with(body, "else") && _is_space(body[4]) { return TagKind.ElseChain; }
+    return TagKind.Mustache;
+}
+
 struct Token {
     token_type: TokenType,
+    // An Expression's kind; Mustache for every other token.
+    tag: TagKind,
     // Text: the bytes to write, template[start..end]. The whitespace pass
     // narrows this range, and a Text left empty writes nothing. A tag: its
     // body between the braces, without ~, trimmed.
@@ -51,6 +72,7 @@ struct Token {
 fn _text_token(start: i64, end: i64) -> Token {
     return Token {
         token_type: TokenType.Text,
+        tag: TagKind.Mustache,
         start: start, end: end, outer_start: start, outer_end: end,
         escaped: false, strip_left: false, strip_right: false,
     };
@@ -93,8 +115,10 @@ fn _scan_tag(input: const u8[:], at: i64) -> Token, const u8[:] {
             let lead = trim_start(body);
             let start = p + body.len - lead.len;
             let end = start + trim_end(lead).len;
+            let tag = if kind == TokenType.Expression { _tag_kind(input[start..end]) } else { TagKind.Mustache };
             return Token {
                 token_type: kind,
+                tag: tag,
                 start: start, end: end, outer_start: at, outer_end: close + 2,
                 escaped: escaped, strip_left: strip_left, strip_right: strip_right,
             }, "";
@@ -111,6 +135,7 @@ fn _scan_tag(input: const u8[:], at: i64) -> Token, const u8[:] {
 fn _tag_token(kind: TokenType, start: i64, end: i64, outer_start: i64, outer_end: i64) -> Token {
     return Token {
         token_type: kind,
+        tag: TagKind.Mustache,
         start: start, end: end, outer_start: outer_start, outer_end: outer_end,
         escaped: false, strip_left: false, strip_right: false,
     };
@@ -212,24 +237,10 @@ fn _is_space(c: u8) -> bool {
 }
 
 // Whether token is a tag that standalone lines apply to: a block tag,
-// {{else}} or a comment.
-fn _standalone_kind(input: const u8[:], token: const Token&) -> bool {
+// {{else}}, a raw block's tag or a comment.
+fn _standalone_kind(token: const Token&) -> bool {
     if token.token_type == TokenType.Comment || token.token_type == TokenType.RawOpen || token.token_type == TokenType.RawClose { return true; }
-    guard token.token_type == TokenType.Expression && token.end > token.start else { return false; }
-    let c = input[token.start];
-    return c == '#' || c == '/' || c == '^' || _is_else(input[token.start..token.end]);
-}
-
-// Whether word is an {{else}} tag: a plain one, or one that chains a block
-// such as {{else if b}}.
-fn _is_else(word: const u8[:]) -> bool {
-    return word == "else" || _is_else_chain(word);
-}
-
-// Whether word chains a block onto an {{else}}: {{else if b}},
-// {{else each items}}.
-fn _is_else_chain(word: const u8[:]) -> bool {
-    return word.len > 4 && starts_with(word, "else") && _is_space(word[4]);
+    return token.token_type == TokenType.Expression && token.tag != TagKind.Mustache;
 }
 
 // Whether only whitespace follows the last line break before tokens[i]:
@@ -305,7 +316,7 @@ fn _control_whitespace(input: const u8[:], tokens: Token[>..]&) {
             let has_next = i + 1 < tokens.len && tokens[i + 1].token_type == TokenType.Text;
             if tag.strip_left && has_prev { _strip_end(input, tokens[i - 1]); }
             if tag.strip_right && has_next { _strip_start(input, tokens[i + 1]); }
-            if _standalone_kind(input, tag) && _prev_blank(input, tokens, i) && _next_blank(input, tokens, i) {
+            if _standalone_kind(tag) && _prev_blank(input, tokens, i) && _next_blank(input, tokens, i) {
                 if has_prev { _strip_indent(input, tokens[i - 1]); }
                 if has_next { _strip_line_end(input, tokens[i + 1]); }
             }
@@ -1114,12 +1125,12 @@ fn _parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots:
             },
             Expression => {
                 let word = source[token.start..token.end];
-                if word == "else" {
+                if token.tag == TagKind.Else {
                     let inner .= _innermost(open);
                     guard inner.opener != NONE && !inner.in_inverse else { return str("unexpected else"); }
                     inner.in_inverse = true;
                     inner.last = NONE;
-                } else if _is_else_chain(word) {
+                } else if token.tag == TagKind.ElseChain {
                     // {{else helper args}}: the inverse holds one block,
                     // helper, which takes the rest up to the closing tag.
                     let inner .= _innermost(open);
@@ -1131,11 +1142,11 @@ fn _parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots:
                     var chained = _open_block(opener, declared);
                     chained.chained = true;
                     open.push(chained);
-                } else if starts_with(word, "/") {
+                } else if token.tag == TagKind.Close {
                     let helper = trim(word[1..]);
                     guard _innermost_is(source, nodes, open, helper) else { return str("unexpected /", helper); }
                     open.resize(_chain_start(open));
-                } else if starts_with(word, "#") {
+                } else if token.tag == TagKind.Open {
                     let opener, declared, err = _parse_block(source, token.start + 1, token.end, nodes, roots, open, args, names, config);
                     guard err.len == 0 else { return err; }
                     open.push(_open_block(opener, declared));
