@@ -1,10 +1,10 @@
-// Helpers written as registrations, as plod writes routes:
-// gooseneck::helpers with one gooseneck::helper per name, and
-// gooseneck::block_helpers with one gooseneck::block_helper per name. The
-// engines come from get_engine and load_engine given the block helpers,
-// which take the names a Config would list from the registrations. Each
-// case asserts, then prints its name; scripts/test.sh compares that list
-// with test/expected/registration.out.
+// How registrations dispatch: helper(cx, name) and block_helper(cx, name),
+// the first registration that answers a call wins, a block that does not
+// answer leaves the call to the ones after it, names match whole, a helper
+// beats a field of its name, and get_engine and load_engine take the block
+// helper names from the registrations. Each case asserts, then prints its
+// name; scripts/test.sh compares that list with
+// test/expected/registration.out.
 import handlebars from "../gooseneck";
 
 struct Item { name: const u8[:] }
@@ -19,17 +19,17 @@ struct Page {
 // The same data as Page, as JSON.
 const CONTEXT_JSON: const u8[:] = "{\"name\":\"ada <3\",\"title\":\"field\",\"flag\":true,\"items\":[{\"name\":\"pen\"},{\"name\":\"ink\"}]}";
 
-// The first param in upper case, made in args.text; anything but a string
+// The first param in upper case, made in cx.text; anything but a string
 // as it is.
-fn loud(args: const gooseneck::Args&) -> json::Value {
-    let value = gooseneck::param(args, 0);
+fn loud(cx: gooseneck::HelperContext&) -> json::Value {
+    let value = gooseneck::param(cx, 0);
     match value {
         Str t => {
-            let start = args.text.len;
+            let start = cx.text.len;
             for c in t.s {
-                if c >= 'a' && c <= 'z' { args.text.push(c - 32); } else { args.text.push(c); }
+                if c >= 'a' && c <= 'z' { cx.text.push(c - 32); } else { cx.text.push(c); }
             }
-            return json::Value.Str { s: args.text[start..] };
+            return json::Value.Str { s: cx.text[start..] };
         },
         _ => { return value; },
     }
@@ -51,50 +51,44 @@ fn is_true(value: json::Value) -> bool {
     }
 }
 
-fn helpers(name: const u8[:], args: const gooseneck::Args&) -> gooseneck::Result {
-    return gooseneck::helpers(args) { call =>
-        gooseneck::helper(call, "loud") { return gooseneck::known(loud(args)); };
-        gooseneck::helper(call, "count") {
-            return gooseneck::known(json::Value.Int { v: gooseneck::param_count(args) });
-        };
-        // A helper with the name of a field wins over it, as in handlebars.js.
-        gooseneck::helper(call, "title") { return gooseneck::known(json::Value.Str { s: "helper" }); };
-        // kind answers strings here; the block falls through for anything
-        // else, to the next registration of kind.
-        gooseneck::helper(call, "kind") {
-            if is_string(gooseneck::param(args, 0)) {
-                return gooseneck::known(json::Value.Str { s: "string" });
-            }
-        };
-        gooseneck::helper(call, "kind") { return gooseneck::known(json::Value.Str { s: "other" }); };
+fn helpers(cx) {
+    gooseneck::helper(cx, "loud") { gooseneck::answer(cx, loud(cx)); };
+    gooseneck::helper(cx, "count") { gooseneck::answer(cx, json::Value.Int { v: gooseneck::param_count(cx) }); };
+    // A helper with the name of a field wins over it, as in handlebars.js.
+    gooseneck::helper(cx, "title") { gooseneck::answer(cx, json::Value.Str { s: "helper" }); };
+    // kind answers strings here, and leaves anything else unanswered, to
+    // the next registration of kind.
+    gooseneck::helper(cx, "kind") {
+        if is_string(gooseneck::param(cx, 0)) { gooseneck::answer(cx, json::Value.Str { s: "string" }); }
     };
+    gooseneck::helper(cx, "kind") { gooseneck::answer(cx, json::Value.Str { s: "other" }); };
+    // The first registration that answers wins: this one never runs.
+    gooseneck::helper(cx, "count") { gooseneck::answer(cx, json::Value.Str { s: "shadowed" }); };
 }
 
-fn blocks<B>(name: const u8[:], args: const gooseneck::Args&, out: u8[>..]&) -> bool {
-    return gooseneck::block_helpers(args) { call =>
-        gooseneck::block_helper(call, "bold") {
-            out.append("<b>");
-            B(gooseneck::this());
-            out.append("</b>");
-        };
-        gooseneck::block_helper(call, "list") {
-            out.append("<ul>");
-            for k in gooseneck::length(gooseneck::param(args, 0)) {
-                out.append("<li>");
-                B(gooseneck::element(0, k));
-                out.append("</li>");
-            }
-            out.append("</ul>");
-        };
-        gooseneck::block_helper(call, "when") {
-            if is_true(gooseneck::param(args, 0)) {
-                B(gooseneck::this());
-            } else {
-                B(gooseneck::inverse(gooseneck::this()));
-            }
-        };
-        gooseneck::block_helper(call, "raw") { B(gooseneck::this()); };
+fn blocks<B>(cx) {
+    gooseneck::block_helper(cx, "bold") {
+        cx.out.append("<b>");
+        B(gooseneck::this());
+        cx.out.append("</b>");
     };
+    gooseneck::block_helper(cx, "list") {
+        cx.out.append("<ul>");
+        for k in gooseneck::length(gooseneck::param(cx, 0)) {
+            cx.out.append("<li>");
+            B(gooseneck::element(0, k));
+            cx.out.append("</li>");
+        }
+        cx.out.append("</ul>");
+    };
+    gooseneck::block_helper(cx, "when") {
+        if is_true(gooseneck::param(cx, 0)) {
+            B(gooseneck::this());
+        } else {
+            B(gooseneck::inverse(gooseneck::this()));
+        }
+    };
+    gooseneck::block_helper(cx, "raw") { B(gooseneck::this()); };
 }
 
 fn show(s: const u8[:]) -> u8[>..] {
@@ -139,13 +133,13 @@ fn main() {
 
     // Helpers.
     check("registered helper", "{{loud name}}", context, "ADA &lt;3");
-    check("second registration", "{{count 1 2 3}}", context, "3");
+    check("first answer wins", "{{count 1 2 3}}", context, "3");
     check("unknown helper renders nothing", "[{{nope 1}}]", context, "[]");
     check("bare name without a helper is the field", "{{name}}", context, "ada &lt;3");
     check("helper wins over a field", "{{title}}", context, "helper");
     check("helper wins over a field, ./ is the field", "{{./title}}", context, "field");
-    check("block that returns answers", "{{kind name}}", context, "string");
-    check("block that falls through leaves the next", "{{kind 1}}", context, "other");
+    check("block that answers", "{{kind name}}", context, "string");
+    check("block that does not answer leaves the next", "{{kind 1}}", context, "other");
     check("subexpressions", "{{loud (loud name)}} {{count (count 1 2) 3}}", context, "ADA &lt;3 2");
     check("helper feeds #if", "{{#if (count)}}x{{else}}none{{/if}}", context, "none");
     check("name must match whole", "[{{lou name}}][{{louder name}}]", context, "[][]");

@@ -1,11 +1,11 @@
 registered helper
-second registration
+first answer wins
 unknown helper renders nothing
 bare name without a helper is the field
 helper wins over a field
 helper wins over a field, ./ is the field
-block that returns answers
-block that falls through leaves the next
+block that answers
+block that does not answer leaves the next
 subexpressions
 helper feeds #if
 name must match whole

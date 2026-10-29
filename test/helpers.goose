@@ -84,32 +84,32 @@ fn upper(text: u8[>..]&, value: json::Value) -> json::Value {
     return json::Value.Str { s: text[start..] };
 }
 
-// The first param in upper case, made in args.text; anything but a string
+// The first param in upper case, made in cx.text; anything but a string
 // as it is.
-fn loud(args: const gooseneck::Args&) -> json::Value {
-    let value = gooseneck::param(args, 0);
+fn loud(cx: gooseneck::HelperContext&) -> json::Value {
+    let value = gooseneck::param(cx, 0);
     match value {
-        Str => { return upper(args.text, value); },
+        Str => { return upper(cx.text, value); },
         _ => { return value; },
     }
 }
 
 // The params joined by the hash argument sep, "" without one.
-fn concat(args: const gooseneck::Args&) -> json::Value {
-    let start = args.text.len;
-    let sep = gooseneck::hash_arg(args, "sep");
-    for i in gooseneck::param_count(args) {
-        if i > 0 { append_text(args.text, sep); }
-        append_text(args.text, gooseneck::param(args, i));
+fn concat(cx: gooseneck::HelperContext&) -> json::Value {
+    let start = cx.text.len;
+    let sep = gooseneck::hash_arg(cx, "sep");
+    for i in gooseneck::param_count(cx) {
+        if i > 0 { append_text(cx.text, sep); }
+        append_text(cx.text, gooseneck::param(cx, i));
     }
-    return json::Value.Str { s: args.text[start..] };
+    return json::Value.Str { s: cx.text[start..] };
 }
 
 // The sum of two integers; Null for anything else.
-fn add(args: const gooseneck::Args&) -> json::Value {
-    match gooseneck::param(args, 0) {
+fn add(cx: const gooseneck::HelperContext&) -> json::Value {
+    match gooseneck::param(cx, 0) {
         Int x => {
-            match gooseneck::param(args, 1) {
+            match gooseneck::param(cx, 1) {
                 Int y => { return json::Value.Int { v: x.v + y.v }; },
                 _ => {},
             }
@@ -119,16 +119,17 @@ fn add(args: const gooseneck::Args&) -> json::Value {
     return json::Value.Null;
 }
 
-fn helpers(name: const u8[:], args: const gooseneck::Args&) -> gooseneck::Result {
-    if name == "loud" { return gooseneck::known(loud(args)); }
-    if name == "eq" { return gooseneck::known(json::Value.Bool { v: same(gooseneck::param(args, 0), gooseneck::param(args, 1)) }); }
-    if name == "id" { return gooseneck::known(gooseneck::param(args, 0)); }
-    if name == "add" { return gooseneck::known(add(args)); }
-    if name == "concat" { return gooseneck::known(concat(args)); }
-    if name == "first" { return gooseneck::known(json::Value.Str { s: "F<" }); }
-    if name == "count" { return gooseneck::known(json::Value.Int { v: gooseneck::param_count(args) }); }
-    if name == "zero" { return gooseneck::known(json::Value.Null); }
-    return gooseneck::unknown();
+fn helpers(cx) {
+    gooseneck::helper(cx, "loud") { gooseneck::answer(cx, loud(cx)); };
+    gooseneck::helper(cx, "eq") {
+        gooseneck::answer(cx, json::Value.Bool { v: same(gooseneck::param(cx, 0), gooseneck::param(cx, 1)) });
+    };
+    gooseneck::helper(cx, "id") { gooseneck::answer(cx, gooseneck::param(cx, 0)); };
+    gooseneck::helper(cx, "add") { gooseneck::answer(cx, add(cx)); };
+    gooseneck::helper(cx, "concat") { gooseneck::answer(cx, concat(cx)); };
+    gooseneck::helper(cx, "first") { gooseneck::answer(cx, json::Value.Str { s: "F<" }); };
+    gooseneck::helper(cx, "count") { gooseneck::answer(cx, json::Value.Int { v: gooseneck::param_count(cx) }); };
+    gooseneck::helper(cx, "zero") { gooseneck::answer(cx, json::Value.Null); };
 }
 
 fn show(s: const u8[:]) -> u8[>..] {
@@ -225,12 +226,9 @@ fn main() {
     if err.len > 0 || out.len != 0 { fail("no helpers", "struct", err, out, ""); }
     print("no helpers");
 
-    // The helpers may be a block. A block's parameters are copies, so text
-    // viewed through its args dies with it: new text goes in a buffer of
-    // the caller's instead of args.text.
+    // The helpers may be a block, given the context by reference.
     let shouted: u8[>..] = [];
-    let scratch: u8[>..] = [];
-    gooseneck::render_into(engine, context, shouted) { name, args => gooseneck::known(upper(scratch, gooseneck::param(args, 0))) };
+    gooseneck::render_into(engine, context, shouted) { cx => gooseneck::answer(cx, upper(cx.text, gooseneck::param(cx, 0))); };
     if shouted != "HELLO" { fail("block helpers", "struct", "", shouted, "HELLO"); }
     print("block helpers");
 
@@ -238,9 +236,9 @@ fn main() {
     var calls: i64 = 0;
     let counted = gooseneck::get_engine("{{n a}},{{n a}},{{#if (n a)}}{{n a}}{{/if}}");
     let counted_out: u8[>..] = [];
-    gooseneck::render_into(counted, context, counted_out) { name, args =>
+    gooseneck::render_into(counted, context, counted_out) { cx =>
         calls += 1;
-        gooseneck::known(json::Value.Int { v: calls })
+        gooseneck::answer(cx, json::Value.Int { v: calls });
     };
     if counted_out != "1,2,4" || calls != 4 { fail("captured state", "struct", "", counted_out, "1,2,4"); }
     print("captured state");

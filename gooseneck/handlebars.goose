@@ -895,9 +895,10 @@ fn _is_bool_literal(arg: Arg) -> bool {
 }
 
 // What compiling needs to know beyond the template: the names of the
-// user's block helpers, those its block_helpers function handles (see
-// Block helpers below), as handlebars.js's knownHelpers. A block whose
-// helper is neither built in nor listed is a compile error.
+// user's block helpers, which get_engine and load_engine read from their
+// registrations (see Block helpers below), as handlebars.js's
+// knownHelpers. A block whose helper is neither built in nor listed is a
+// compile error.
 struct Config { block_helpers: (const u8[:])[] }
 
 // Whether config lists helper as a user block helper.
@@ -1247,20 +1248,15 @@ fn _compile(template: const u8[:], prefix: const u8[:], config: const Config&) -
 
 // Compiles template text into an Engine. On a malformed template the Engine
 // carries the error, such as "unexpected /with", and renders nothing. The
-// Engine copies what it needs: template may go away afterwards.
+// Engine copies what it needs: template may go away afterwards. A template
+// with this engine opens only the built-in blocks.
 fn get_engine(template: const u8[:]) -> Engine {
-    let config = Config { block_helpers: [] };
-    return _compile(template, "", config);
+    return get_engine(template, _no_block_helpers);
 }
 
-// get_engine with a Config: the user's block helpers that templates may
-// open, {{#list items}}.
-fn get_engine(template: const u8[:], config: const Config&) -> Engine {
-    return _compile(template, "", config);
-}
-
-// get_engine with the block helpers that G registers with block_helper (see
-// block_helpers): their names are the Config's.
+// get_engine with the user's block helpers G: the blocks G registers with
+// block_helper, {{#list items}} say, are the ones a template may open
+// besides the built-in ones.
 fn get_engine<G>(template: const u8[:]) -> Engine {
     let names: u8[>..] = [];
     _registered_blocks(names, G);
@@ -1271,23 +1267,17 @@ fn get_engine<G>(template: const u8[:]) -> Engine {
 // Reads the template file at path and compiles it into an Engine. The
 // error, if any, is "cannot read template <path>" or "<path>: <parse error>".
 fn load_engine(path: const u8[:]) -> Engine {
-    let config = Config { block_helpers: [] };
-    return load_engine(path, config);
+    return load_engine(path, _no_block_helpers);
 }
 
-// load_engine with a Config, as get_engine.
-fn load_engine(path: const u8[:], config: const Config&) -> Engine {
+// load_engine with the user's block helpers G, as get_engine.
+fn load_engine<G>(path: const u8[:]) -> Engine {
     let source: u8[>..] = [];
     guard read_file(path, source) else { return _failed(str("cannot read template ", path)); }
-    return _compile(source, str(path, ": "), config);
-}
-
-// load_engine with the block helpers that G registers, as get_engine.
-fn load_engine<G>(path: const u8[:]) -> Engine {
     let names: u8[>..] = [];
     _registered_blocks(names, G);
     let config = Config { block_helpers: words(names) };
-    return load_engine(path, config);
+    return _compile(source, str(path, ": "), config);
 }
 
 // The field names engine's paths use, as slices of engine.text, for the
@@ -1435,180 +1425,155 @@ recursive fn _doc_struct<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key
 // The user's helpers are one static function value (spec §7.6), passed as
 // the last argument of a render function: a named function, or a block,
 // which may capture the caller's locals and so carries any state the
-// helpers need. It is called as
+// helpers need. It takes the call's HelperContext, as plod's handlers take
+// a request's cx, and answers the call by filling it in:
 //
-//     helpers(name: const u8[:], args: const Args&) -> Result
-//
-// for each {{helper args}} mustache and each (helper args) subexpression,
-// with the helper's name and its arguments already resolved, and for each
-// bare {{name}} (see _may_be_helper), with no arguments, before name is
-// looked up as a field. It returns known(value) for a helper it has, and
-// unknown() for any other name, which leaves a bare {{name}} to the field.
-// For example:
-//
-//     fn my_helpers(name: const u8[:], args: const gooseneck::Args&) -> gooseneck::Result {
-//         if name == "count" {
-//             return gooseneck::known(json::Value.Int { v: gooseneck::param_count(args) });
-//         }
-//         return gooseneck::unknown();
+//     fn my_helpers(cx) {
+//         gooseneck::helper(cx, "loud") { gooseneck::answer(cx, loud(cx)); };
+//         gooseneck::helper(cx, "count") {
+//             gooseneck::answer(cx, json::Value.Int { v: gooseneck::param_count(cx) });
+//         };
 //     }
 //     gooseneck::render_into(engine, context, out, my_helpers);
 //
 // or, as a block that keeps state in a local of its caller:
 //
 //     var calls: i64 = 0;
-//     gooseneck::render_into(engine, context, out) { name, args =>
-//         if name == "next" {
+//     gooseneck::render_into(engine, context, out) { cx =>
+//         gooseneck::helper(cx, "next") {
 //             calls += 1;
-//             gooseneck::known(json::Value.Int { v: calls })
-//         } else {
-//             gooseneck::unknown()
-//         }
+//             gooseneck::answer(cx, json::Value.Int { v: calls });
+//         };
 //     };
 //
-// A result is a scalar: Str, Int, Num, Bool or Null. A mustache writes it
+// Its parameter is untyped, as a plod handler's cx is. The render passes
+// the context with & so that a block gets it by reference rather than a
+// copy, and a function that types it as HelperContext& makes that & a
+// "redundant &" warning (spec §4.1); an untyped one does not.
+//
+// It is called for each {{helper args}} mustache and each (helper args)
+// subexpression, with the helper's name and its arguments already resolved
+// in cx, and for each bare {{name}} (see _may_be_helper), with no
+// arguments, before name is looked up as a field. Each helper(cx, name)
+// registration runs its block when the call is to name and no registration
+// before it answered; the block answers with answer(cx, value), or leaves
+// the call to the registrations after it. A call nobody answers leaves a
+// bare {{name}} to the field.
+//
+// A value is a scalar: Str, Int, Num, Bool or Null. A mustache writes it
 // as it would a field's value, escaped or not; {{#if}} tests its
 // truthiness; it may be an argument of another call. {{#with}} and
 // {{#each}} take a path or a lookup, since a scalar is never a context.
 //
 // lookup is built in (see _lookup_node) and wins over a user helper of the
 // same name: it finds a context node, not a scalar, which no user helper
-// can return. (handlebars.js lets registerHelper replace it.) A helper the function does not
-// know gives Null, which writes nothing and is false. (handlebars.js throws
-// "Missing helper" at render time; these renders have no error to return
-// once the template compiled.) The render functions without helpers know
-// none.
+// can give. (handlebars.js lets registerHelper replace it.) A call nobody
+// answers gives Null, which writes nothing and is false. (handlebars.js
+// throws "Missing helper" at render time; these renders have no error to
+// return once the template compiled.) The render functions without helpers
+// answer nothing.
 //
-// A helper's text must outlive the call, since its result may be another
-// call's argument: a slice of the context, of the template, or of
-// args.text, a buffer that lives until the render ends. A helper that makes
-// new text appends it there and returns the slice it appended.
-//
-// A block's parameters are copies (a named function's args is a
-// reference), so text viewed through a block's args dies with the block
-// and cannot be its result: the compiler rejects it ("binding result to a
-// value holding references rooted at args, which does not outlive it").
-// A block returns scalars, literals, or new text in a buffer of its
-// caller's; a named function has no such limit.
-
-// What the helpers give for a call: whether they know its helper, and if
-// so its value.
-struct Result { value: json::Value, known: bool }
-
-// The result of a helper the helpers have.
-fn known(value: json::Value) -> Result {
-    return Result { value: value, known: true };
-}
-
-// The result for a name the helpers do not have.
-fn unknown() -> Result {
-    return Result { value: json::Value.Null, known: false };
-}
+// A helper's text must outlive the call, since its value may be another
+// call's argument: a slice of the context, of the template, or of cx.text,
+// a buffer that lives until the render ends. A helper that makes new text
+// appends it there and answers with the slice it appended.
 
 // A resolved argument: the hash key, empty for a param, and the value.
 struct Resolved { key: const u8[:], value: json::Value }
 
-// The arguments of one helper call, resolved: a path to its context value
-// (Null when it finds nothing; an object or an array as its Obj / Arr
-// count), a literal to its value, a subexpression to its helper's result.
-// Read them with param, param_count and hash_arg. params and hash are runs
-// of resolved, a stack that each call pushes onto and pops when done.
-// name is the helper the template calls, which helper and block_helper
-// match. listing is set only while an engine asks the block helpers for
-// their names (see _registered_blocks), never in a render.
-struct Args {
+// One helper call, which the user's helpers read and answer, as plod's
+// handlers read and answer a request's cx:
+//
+// - name: the helper the template calls, which helper and block_helper
+//   match;
+// - params and hash: the call's arguments, resolved: a path to its context
+//   value (Null when it finds nothing; an object or an array as its Obj /
+//   Arr count), a literal to its value, a subexpression to its helper's
+//   value. Read them with param, param_count and hash_arg. They are runs
+//   of resolved, a stack that each call pushes onto and pops when done;
+// - text: where a helper makes new text, alive until the render ends;
+// - out: the render's output, where a block helper writes its block;
+// - value and answered: the answer, which answer and block_helper fill in;
+// - listing: set only while an engine asks the block helpers for their
+//   names (see _registered_blocks), never in a render.
+//
+// The render keeps one HelperContext and fills it in for each call, and a
+// block helper's call gets a copy of it, since its body makes calls of its
+// own. Only references are passed down the render's recursive walk, never
+// stored in a struct built there (spec §7.8), so the context is made once,
+// outside the walk, and the name travels in it.
+struct HelperContext {
+    name: const u8[:] = "",
     resolved: const Resolved[>..<]&,
     params: Range,
     hash: Range,
     text: u8[>..]&,
-    name: const u8[:] = "",
+    out: u8[>..]&,
+    value: json::Value = json::Value.Null,
+    answered: bool = false,
     listing: bool = false,
 }
 
 // The resolved argument at position i of range.
-fn _resolved_at(args: const Args&, range: Range, i: i64) -> Resolved {
-    return args.resolved[range.first + i];
+fn _resolved_at(cx: const HelperContext&, range: Range, i: i64) -> Resolved {
+    return cx.resolved[range.first + i];
 }
 
 // How many positional arguments the call has.
-fn param_count(args: const Args&) -> i64 {
-    return args.params.count;
+fn param_count(cx: const HelperContext&) -> i64 {
+    return cx.params.count;
 }
 
 // The positional argument at i, counting from 0; Null past the last one,
 // as JavaScript's undefined.
-fn param(args: const Args&, i: i64) -> json::Value {
-    guard i >= 0 && i < args.params.count else { return json::Value.Null; }
-    return _resolved_at(args, args.params, i).value;
+fn param(cx: const HelperContext&, i: i64) -> json::Value {
+    guard i >= 0 && i < cx.params.count else { return json::Value.Null; }
+    return _resolved_at(cx, cx.params, i).value;
 }
 
 // The hash argument key=..., or Null when the call has none.
-fn hash_arg(args: const Args&, key: const u8[:]) -> json::Value {
-    for i in args.hash.count {
-        let entry = _resolved_at(args, args.hash, i);
+fn hash_arg(cx: const HelperContext&, key: const u8[:]) -> json::Value {
+    for i in cx.hash.count {
+        let entry = _resolved_at(cx, cx.hash, i);
         if entry.key == key { return entry.value; }
     }
     return json::Value.Null;
 }
 
+// Answers the call cx is for with value: what the helper gives.
+fn answer(cx: HelperContext&, value: json::Value) {
+    cx.value = value;
+    cx.answered = true;
+}
+
+// Registers the helper name: runs F, which answers the call with answer,
+// when cx is a call to name that no registration before has answered.
+inline fn helper<F>(cx: HelperContext&, name: const u8[:]) {
+    if !cx.answered && cx.name == name { F(); }
+}
+
 // Knows no helper: what the render functions without helpers use.
-fn _no_helpers(name: const u8[:], args: const Args&) -> Result {
-    return unknown();
-}
-
-// ---------------------------------------------------------------------------
-// Registering helpers.
-//
-// helpers and helper write a helpers function as plod::routes and
-// plod::get write a request handler: one registration per helper, a name
-// and a block, instead of a chain of ifs on name.
-//
-//     fn my_helpers(name: const u8[:], args: const gooseneck::Args&) -> gooseneck::Result {
-//         return gooseneck::helpers(args) { call =>
-//             gooseneck::helper(call, "loud") { return gooseneck::known(loud(args)); };
-//             gooseneck::helper(call, "count") {
-//                 return gooseneck::known(json::Value.Int { v: gooseneck::param_count(args) });
-//             };
-//         };
-//     }
-//
-// The function keeps the signature a render takes, so it is passed as
-// before. call is the call being dispatched, args itself. A return in a
-// block returns from the function the block is written in (spec §7.6),
-// my_helpers here, so the first registration whose name matches answers
-// the call and the ones after it never run. A block that ends without
-// returning leaves the call to the registrations after it; when none
-// answers, helpers returns unknown(). The blocks read args from the
-// function around them, so a result may view args.text.
-
-// Runs F, the registrations, on call; unknown() when none of them returned.
-inline fn helpers<F>(call: const Args&) -> Result {
-    F(&call);
-    return unknown();
-}
-
-// Registers the helper name: runs F, which returns the helper's result from
-// the helpers function, when call is to name.
-inline fn helper<F>(call: const Args&, name: const u8[:]) {
-    if call.name == name { F(); }
-}
+fn _no_helpers(cx) {}
 
 // ---------------------------------------------------------------------------
 // Block helpers.
 //
 // The user's block helpers are a second static function value, passed
-// after the helpers to a render function. It is called as
+// after the helpers to a render function, and to get_engine or
+// load_engine. It is called as
 //
-//     block_helpers<B>(name: const u8[:], args: const Args&, out: u8[>..]&) -> bool
+//     block_helpers<B>(cx: HelperContext&)
 //
-// for each {{#name args}}...{{/name}} whose name the engine's Config lists,
-// with the arguments resolved as a helper's are. It writes straight into
-// out, and calls B, the block's body, as often as it likes, each time with
-// the context the body runs on:
+// for each {{#name args}}...{{/name}} that is not a built-in block, with
+// the arguments resolved in cx as a helper's are. Each
+// block_helper(cx, name) registration runs its block when the call is to
+// name, and that answers the call. The block writes straight into cx.out,
+// and calls B, the block's body, as often as it likes, each time with the
+// context the body runs on:
 //
 //     B(this())           the context the block was written in;
 //     B(param(i))         what the param at position i finds: a path or a
-//                         lookup, never a literal or a helper's result;
+//                         lookup, never a literal or a helper's value;
 //     B(element(i, k))    the item at position k of the array or object
 //                         that param i finds, with @index, @key, @first and
 //                         @last set as #each sets them;
@@ -1616,35 +1581,38 @@ inline fn helper<F>(call: const Args&, name: const u8[:]) {
 //
 // B returns whether it found that context (and walked the body). The block
 // parameters of {{#name args as |a b|}} are, like #each's, the context the
-// body runs on and the item's @key (an element's only). It returns true
-// for a name it has. For example:
+// body runs on and the item's @key (an element's only). For example:
 //
-//     fn blocks<B>(name: const u8[:], args: const gooseneck::Args&, out: u8[>..]&) -> bool {
-//         if name == "bold" {
-//             out.append("<b>");
+//     fn blocks<B>(cx) {
+//         gooseneck::block_helper(cx, "bold") {
+//             cx.out.append("<b>");
 //             B(gooseneck::this());
-//             out.append("</b>");
-//             return true;
-//         }
-//         if name == "list" {
-//             out.append("<ul>");
-//             for k in gooseneck::length(gooseneck::param(args, 0)) {
-//                 out.append("<li>");
+//             cx.out.append("</b>");
+//         };
+//         gooseneck::block_helper(cx, "list") {
+//             cx.out.append("<ul>");
+//             for k in gooseneck::length(gooseneck::param(cx, 0)) {
+//                 cx.out.append("<li>");
 //                 B(gooseneck::element(0, k));
-//                 out.append("</li>");
+//                 cx.out.append("</li>");
 //             }
-//             out.append("</ul>");
-//             return true;
-//         }
-//         return false;
+//             cx.out.append("</ul>");
+//         };
 //     }
-//     let engine = gooseneck::get_engine(template, gooseneck::Config { block_helpers: ["bold", "list"] });
+//     let engine = gooseneck::get_engine(template, blocks);
 //     gooseneck::render_into(engine, context, out, my_helpers, blocks);
+//
+// Given to get_engine or load_engine, the function also gives the names
+// of its block helpers, which a template may open: the engine calls it
+// once with cx.listing set, where each block_helper adds its name instead
+// of running its block. So {{#typo}} is a compile error, as with
+// handlebars.js's knownHelpers, and the names cannot drift from the
+// helpers.
 //
 // Its body runs inside the render's recursive walk, so the limits of
 // spec §7.8 hold there: no growable local (a u8[>..] buffer, say) may be in
-// scope where it calls B. Text it builds goes straight into out, or into
-// args.text. Each B call finds its context again from the params, so
+// scope where it calls B. Text it builds goes straight into cx.out, or into
+// cx.text. Each B call finds its context again from the params, so
 // element(i, k) walks k items: an iterator over n items costs n²/2 steps,
 // which matters only for long lists.
 
@@ -1695,67 +1663,34 @@ fn append_escaped(out: u8[>..]&, text: const u8[:]) {
     _append_html_escaped(out, text);
 }
 
-// The block helpers of the render functions that take none.
-fn _no_block_helpers<B>(name: const u8[:], args: const Args&, out: u8[>..]&) -> bool {
-    return false;
-}
-
-// block_helpers and block_helper register block helpers as helpers and
-// helper register helpers:
-//
-//     fn blocks<B>(name: const u8[:], args: const gooseneck::Args&, out: u8[>..]&) -> bool {
-//         return gooseneck::block_helpers(args) { call =>
-//             gooseneck::block_helper(call, "bold") {
-//                 out.append("<b>");
-//                 B(gooseneck::this());
-//                 out.append("</b>");
-//             };
-//         };
-//     }
-//     let engine = gooseneck::get_engine(template, blocks);
-//     gooseneck::render_into(engine, context, out, my_helpers, blocks);
-//
-// The block of the registration whose name matches runs, and that answers
-// the call: it needs no return. Given to get_engine or load_engine, the
-// same function gives the names a Config would list, so they cannot drift
-// apart: the engine calls it once with args.listing set, where each
-// block_helper adds its name instead of running.
-//
-// call is args, by reference: a block's parameter inside the render's
-// recursion may not be a slice or a struct holding one (spec §7.8), so the
-// name travels in args.
-
-// Runs F, the registrations, on call; false when none of them has its
-// name.
-inline fn block_helpers<F>(call: const Args&) -> bool {
-    F(&call);
-    return false;
-}
-
-// Registers the block helper name: when call is to name, runs F, which
-// writes the block and calls B, and answers the call. While listing, it
-// appends name to call.text, one per line, instead.
-inline fn block_helper<F>(call: const Args&, name: const u8[:]) {
-    if call.listing {
-        call.text.append(name);
-        call.text.push('\n');
+// Registers the block helper name: when cx is a call to name that no
+// registration before has answered, runs F, which writes the block into
+// cx.out and calls B, and answers the call. While cx.listing, it appends
+// name to cx.text, one per line, instead.
+inline fn block_helper<F>(cx: HelperContext&, name: const u8[:]) {
+    if cx.listing {
+        cx.text.append(name);
+        cx.text.push('\n');
         return;
     }
-    guard call.name == name else { return; }
+    guard !cx.answered && cx.name == name else { return; }
     F();
-    return true from block_helpers;
+    cx.answered = true;
 }
 
+// The block helpers of the render functions that take none.
+fn _no_block_helpers<B>(cx) {}
+
 // Appends the names of the block helpers that G registers with
-// block_helper to names, one per line: G runs once with args.listing set,
+// block_helper to names, one per line: G runs once with cx.listing set,
 // and with a B that walks nothing.
 fn _registered_blocks<G>(names: u8[>..]&) {
     fn no_body(part: Body) -> bool { return false; }
     let resolved: Resolved[>..<] = [];
     let none = Range { first: 0, count: 0 };
-    let args = Args { resolved: resolved, params: none, hash: none, text: names, listing: true };
     let out: u8[>..] = [];
-    G("", args, out, no_body);
+    var cx = HelperContext { resolved: resolved, params: none, hash: none, text: names, out: out, listing: true };
+    G(cx, no_body);
 }
 
 // ---------------------------------------------------------------------------
@@ -1775,7 +1710,8 @@ struct ParamFrame { frame: i64, key: json::Value }
 // the helper arguments. A frame is a node of the context document; the
 // first is its root. loops holds one Loop per {{#each}} being walked, the
 // innermost last. resolved is the stack of resolved helper arguments, and
-// args views the current call's; text is Args.text. params holds one
+// helper is the context of the current helper call, which views them.
+// params holds one
 // ParamFrame per block with block parameters whose body is being walked,
 // the innermost last, which a ParamRef counts back from. All are owned by
 // _evaluate, and the document by its caller, outside the walk.
@@ -1786,7 +1722,7 @@ struct RenderContext {
     loops: Loop[>..<]&,
     params: ParamFrame[>..<]&,
     resolved: Resolved[>..<]&,
-    args: Args,
+    helper: HelperContext,
 }
 
 // Resolves path on the stack to a node, or null. Each leading ../ (or ..)
@@ -1982,31 +1918,37 @@ recursive fn _push_resolved<F>(range: Range, rc: RenderContext&) {
 }
 
 // Calls the helper name of F with params and hash resolved, innermost
-// subexpressions first, and returns its result: Null when F does not know
-// name. The arguments are popped once the helper has run.
+// subexpressions first, and returns its value: Null when F does not answer.
+// The arguments are popped once the helper has run.
 recursive fn _call_helper<F>(name: Span, params: Range, hash: Range, rc: RenderContext&) -> json::Value {
     let mark = rc.resolved.len;
     _push_resolved(params, rc, F);
     _push_resolved(hash, rc, F);
-    rc.args.params = Range { first: mark, count: params.count };
-    rc.args.hash = Range { first: mark + params.count, count: hash.count };
-    rc.args.name = _span_text(rc.engine.text, name);
-    let result = F(rc.args.name, rc.args);
+    _start_call(rc, name, Range { first: mark, count: params.count }, Range { first: mark + params.count, count: hash.count });
+    F(&rc.helper);
     rc.resolved.resize(mark);
-    guard result.known else { return json::Value.Null; }
-    return result.value;
+    return rc.helper.value;
+}
+
+// Readies rc.helper for a call to the helper name with params and hash:
+// unanswered, with a Null value.
+fn _start_call(rc: RenderContext&, name: Span, params: Range, hash: Range) {
+    rc.helper.name = _span_text(rc.engine.text, name);
+    rc.helper.params = params;
+    rc.helper.hash = hash;
+    rc.helper.value = json::Value.Null;
+    rc.helper.answered = false;
 }
 
 // Calls the helper name of F with no arguments, for a bare {{name}}, and
-// returns what F gives: unknown() when it has no such helper. lookup
-// without arguments finds nothing.
-fn _bare_helper<F>(name: Span, rc: RenderContext&) -> Result {
-    guard !_is_lookup(rc, name) else { return known(json::Value.Null); }
+// returns whether F answered, with its value in rc.helper.value. lookup
+// without arguments answers Null.
+fn _bare_helper<F>(name: Span, rc: RenderContext&) -> bool {
     let none = Range { first: rc.resolved.len, count: 0 };
-    rc.args.params = none;
-    rc.args.hash = none;
-    rc.args.name = _span_text(rc.engine.text, name);
-    return F(rc.args.name, rc.args);
+    _start_call(rc, name, none, none);
+    guard !_is_lookup(rc, name) else { return true; }
+    F(&rc.helper);
+    return rc.helper.answered;
 }
 
 // Whether a call is to the built-in lookup.
@@ -2253,10 +2195,10 @@ recursive fn _walk_body<F, G>(node: const Node&, body: Body, rc: RenderContext&)
     return true;
 }
 
-// Runs a user block helper: resolves its arguments, then hands G its name,
-// a copy of the arguments (the body's own calls reuse rc.args) and body,
-// the B of the description under Block helpers. The arguments are popped
-// once G returns.
+// Runs a user block helper: resolves its arguments, then hands G a copy of
+// rc.helper filled in for the call (the body's own calls reuse rc.helper)
+// and body, the B of the description under Block helpers. The arguments
+// are popped once G returns.
 recursive fn _eval_user_block<F, G>(node: const Node&, rc: RenderContext&) {
     fn body(part: Body) -> bool {
         return _walk_body(node, part, rc, F, G);
@@ -2264,11 +2206,12 @@ recursive fn _eval_user_block<F, G>(node: const Node&, rc: RenderContext&) {
     let mark = rc.resolved.len;
     _push_resolved(node.params, rc, F);
     _push_resolved(node.hash, rc, F);
-    var args = rc.args;
-    args.params = Range { first: mark, count: node.params.count };
-    args.hash = Range { first: mark + node.params.count, count: node.hash.count };
-    args.name = _span_text(rc.engine.text, node.value);
-    G(args.name, args, rc.out, body);
+    var cx = rc.helper;
+    cx.name = _span_text(rc.engine.text, node.value);
+    cx.params = Range { first: mark, count: node.params.count };
+    cx.hash = Range { first: mark + node.params.count, count: node.hash.count };
+    cx.answered = false;
+    G(&cx, body);
     rc.resolved.resize(mark);
 }
 
@@ -2302,9 +2245,8 @@ recursive fn _evaluate_node<F, G>(index: i64, rc: RenderContext&) {
         Text => { rc.out.append(value); },
         Expression => {
             if node.helper_first {
-                let result = _bare_helper(node.value, rc, F);
-                if result.known {
-                    _write_value(result.value, node.escaped, rc);
+                if _bare_helper(node.value, rc, F) {
+                    _write_value(rc.helper.value, node.escaped, rc);
                 } else {
                     _eval_expression(value, node.param_ref, node.escaped, rc);
                 }
@@ -2332,8 +2274,8 @@ fn _evaluate<F, G>(engine: const Engine&, doc: const json::Node[>..]&, out: u8[>
     let resolved: Resolved[>..<] = [];
     let text: u8[>..] = [];
     let none = Range { first: 0, count: 0 };
-    let args = Args { resolved: resolved, params: none, hash: none, text: text };
-    let rc = RenderContext { out: out, stack: stack, engine: engine, loops: loops, params: params, resolved: resolved, args: args };
+    let helper = HelperContext { resolved: resolved, params: none, hash: none, text: text, out: out };
+    let rc = RenderContext { out: out, stack: stack, engine: engine, loops: loops, params: params, resolved: resolved, helper: helper };
     var index: i64 = 0;
     while index < engine.roots.len {
         _evaluate_node(engine.roots[index], rc, F, G);

@@ -27,9 +27,7 @@ struct Shop {
 const CONTEXT_JSON: const u8[:] = "{\"title\":\"Shop <1>\",\"tags\":[\"new\",\"sale\"],\"items\":[{\"name\":\"pen\",\"price\":2},{\"name\":\"ink\",\"price\":0}],\"owner\":{\"first\":\"Ada\",\"last\":\"Lovelace\"},\"prices\":{\"pen\":2,\"ink\":0.5},\"empty\":[],\"flag\":true,\"off\":false}";
 
 // No expression helpers.
-fn helpers(name: const u8[:], args: const gooseneck::Args&) -> gooseneck::Result {
-    return gooseneck::unknown();
-}
+fn helpers(cx) {}
 
 // Appends a string value, HTML-escaped or as it is.
 fn append_string(out: u8[>..]&, value: json::Value, escaped: bool) {
@@ -49,88 +47,75 @@ fn is_true(value: json::Value) -> bool {
     }
 }
 
-fn blocks<B>(name: const u8[:], args: const gooseneck::Args&, out: u8[>..]&) -> bool {
+fn blocks<B>(cx) {
     // bold: "<b>" + options.fn(this) + "</b>"
-    if name == "bold" {
-        out.append("<b>");
+    gooseneck::block_helper(cx, "bold") {
+        cx.out.append("<b>");
         B(gooseneck::this());
-        out.append("</b>");
-        return true;
-    }
+        cx.out.append("</b>");
+    };
     // raw: options.fn(this)
-    if name == "raw" {
+    gooseneck::block_helper(cx, "raw") {
         B(gooseneck::this());
-        return true;
-    }
+    };
     // twice: options.fn(this) + options.fn(this)
-    if name == "twice" {
+    gooseneck::block_helper(cx, "twice") {
         B(gooseneck::this());
         B(gooseneck::this());
-        return true;
-    }
+    };
     // list: "<ul>" + each item as "<li>" + options.fn(item, { data, blockParams: [item, key] }) + "</li>" + "</ul>"
-    if name == "list" {
-        out.append("<ul>");
-        for k in gooseneck::length(gooseneck::param(args, 0)) {
-            out.append("<li>");
+    gooseneck::block_helper(cx, "list") {
+        cx.out.append("<ul>");
+        for k in gooseneck::length(gooseneck::param(cx, 0)) {
+            cx.out.append("<li>");
             B(gooseneck::element(0, k));
-            out.append("</li>");
+            cx.out.append("</li>");
         }
-        out.append("</ul>");
-        return true;
-    }
+        cx.out.append("</ul>");
+    };
     // backwards: options.fn(item, { data, blockParams: [item, key] }) for each item, last first
-    if name == "backwards" {
-        var k = gooseneck::length(gooseneck::param(args, 0));
+    gooseneck::block_helper(cx, "backwards") {
+        var k = gooseneck::length(gooseneck::param(cx, 0));
         while k > 0 {
             k -= 1;
             B(gooseneck::element(0, k));
         }
-        return true;
-    }
+    };
     // when: v === true ? options.fn(this) : options.inverse(this)
-    if name == "when" {
-        if is_true(gooseneck::param(args, 0)) {
+    gooseneck::block_helper(cx, "when") {
+        if is_true(gooseneck::param(cx, 0)) {
             B(gooseneck::this());
         } else {
             B(gooseneck::inverse(gooseneck::this()));
         }
-        return true;
-    }
+    };
     // scope: options.fn(v, { blockParams: [v] })
-    if name == "scope" {
+    gooseneck::block_helper(cx, "scope") {
         B(gooseneck::param(0));
-        return true;
-    }
+    };
     // tag: "<" + name + " class=\"" + escape(class) + "\">" + options.fn(this) + "</" + name + ">"
-    if name == "tag" {
-        out.append("<");
-        append_string(out, gooseneck::hash_arg(args, "name"), false);
-        out.append(" class=\"");
-        append_string(out, gooseneck::hash_arg(args, "class"), true);
-        out.append("\">");
+    gooseneck::block_helper(cx, "tag") {
+        cx.out.append("<");
+        append_string(cx.out, gooseneck::hash_arg(cx, "name"), false);
+        cx.out.append(" class=\"");
+        append_string(cx.out, gooseneck::hash_arg(cx, "class"), true);
+        cx.out.append("\">");
         B(gooseneck::this());
-        out.append("</");
-        append_string(out, gooseneck::hash_arg(args, "name"), false);
-        out.append(">");
-        return true;
-    }
+        cx.out.append("</");
+        append_string(cx.out, gooseneck::hash_arg(cx, "name"), false);
+        cx.out.append(">");
+    };
     // label: escape(v) + ": " + options.fn(this)
-    if name == "label" {
-        append_string(out, gooseneck::param(args, 0), true);
-        out.append(": ");
+    gooseneck::block_helper(cx, "label") {
+        append_string(cx.out, gooseneck::param(cx, 0), true);
+        cx.out.append(": ");
         B(gooseneck::this());
-        return true;
-    }
+    };
     // try: v is an object ? options.fn(v, { blockParams: [v] }) : "missing"
-    if name == "try" {
-        if !B(gooseneck::param(0)) { out.append("missing"); }
-        return true;
-    }
-    return false;
+    gooseneck::block_helper(cx, "try") {
+        if !B(gooseneck::param(0)) { cx.out.append("missing"); }
+    };
 }
-
-const BLOCKS = ["raw", "bold", "twice", "list", "backwards", "when", "scope", "tag", "label", "try"];
 
 fn show(s: const u8[:]) -> u8[>..] {
     let out: u8[>..] = [];
@@ -148,14 +133,9 @@ fn fail(label: const u8[:], how: const u8[:], err: const u8[:], got: const u8[:]
     assert(false);
 }
 
-fn engine_for(template: const u8[:]) -> gooseneck::Engine {
-    let config = gooseneck::Config { block_helpers: BLOCKS };
-    return gooseneck::get_engine(template, config);
-}
-
 // Renders template with the struct, the JSON, or both; each must give want.
 fn check(label: const u8[:], template: const u8[:], context: const Shop&, use_struct: bool, use_json: bool, want: const u8[:]) {
-    let engine = engine_for(template);
+    let engine = gooseneck::get_engine(template, blocks);
     if use_struct {
         let out, err = gooseneck::render(engine, context, helpers, blocks);
         if err.len > 0 || out != want { fail(label, "struct", err, out, want); }
@@ -168,10 +148,10 @@ fn check(label: const u8[:], template: const u8[:], context: const Shop&, use_st
     print(label);
 }
 
-// Compiles template with the block helpers in the Config, or with none,
-// and renders it; the render must fail with want.
-fn check_rejected(label: const u8[:], template: const u8[:], configured: bool, context: const Shop&, want: const u8[:]) {
-    let engine = if configured { engine_for(template) } else { gooseneck::get_engine(template) };
+// Compiles template with the block helpers, or without them, and renders
+// it; the render must fail with want.
+fn check_rejected(label: const u8[:], template: const u8[:], with_blocks: bool, context: const Shop&, want: const u8[:]) {
+    let engine = if with_blocks { gooseneck::get_engine(template, blocks) } else { gooseneck::get_engine(template) };
     let out, err = gooseneck::render(engine, context, helpers, blocks);
     if err != want || out.len != 0 { fail(label, "error", err, out, want); }
     print(label);
@@ -240,6 +220,6 @@ fn main() {
 
     check_rejected("unknown block helper", "{{#nope}}x{{/nope}}", true, context, "unknown block helper #nope");
     check_rejected("unclosed block helper", "{{#bold}}x", true, context, "unclosed #bold");
-    check_rejected("not in the config", "{{#bold}}x{{/bold}}", false, context, "unknown block helper #bold");
+    check_rejected("compiled without the block helpers", "{{#bold}}x{{/bold}}", false, context, "unknown block helper #bold");
     check_rejected("params on if still rejected", "{{#if flag as |f|}}x{{/if}}", true, context, "#if takes no block parameters");
 }

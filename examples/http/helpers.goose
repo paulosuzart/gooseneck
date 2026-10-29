@@ -13,13 +13,13 @@ fn _suffix(n: i64) -> const u8[:] {
     return "th";
 }
 
-fn _ordinal(args: const gooseneck::Args&) -> json::Value {
-    match gooseneck::param(args, 0) {
+fn _ordinal(cx: gooseneck::HelperContext&) -> json::Value {
+    match gooseneck::param(cx, 0) {
         Int n => {
-            let start = args.text.len;
-            format(args.text, n.v);
-            args.text.append(_suffix(n.v));
-            return json::Value.Str { s: args.text[start..] };
+            let start = cx.text.len;
+            format(cx.text, n.v);
+            cx.text.append(_suffix(n.v));
+            return json::Value.Str { s: cx.text[start..] };
         },
         _ => { return json::Value.Null; },
     }
@@ -31,9 +31,7 @@ fn _now() -> json::Value {
 }
 
 // The helpers the template may call, one registration each.
-fn all(name: const u8[:], args: const gooseneck::Args&) -> gooseneck::Result {
-    return gooseneck::helpers(args) { call =>
-        gooseneck::helper(call, "ordinal") { return gooseneck::known(_ordinal(args)); };
-        gooseneck::helper(call, "now") { return gooseneck::known(_now()); };
-    };
+fn all(cx) {
+    gooseneck::helper(cx, "ordinal") { gooseneck::answer(cx, _ordinal(cx)); };
+    gooseneck::helper(cx, "now") { gooseneck::answer(cx, _now()); };
 }
