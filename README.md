@@ -53,12 +53,12 @@ fn main() {
 |---|---|
 | `get_engine(template)` | Compiles template text. |
 | `load_engine(path)` | Reads and compiles a template file. Errors are prefixed with the path. |
-| `get_engine(template, blocks)`, `load_engine(path, blocks)` | The same, with your block helpers: their names come from the registrations. |
 
 Either way you get an `Engine`. When the template is malformed,
 `engine.error` holds the message and every render returns it instead of
 rendering. The `Engine` owns a copy of everything it needs, so the template
-text may go away.
+text may go away. Helpers and block helpers aren't given here but to each
+render (see [Helpers](#helpers)): an `Engine` can't hold a function.
 
 ### Rendering
 
@@ -176,7 +176,8 @@ else changes.
 Expression helpers have no list of names. handlebars.js also decides a
 bare name at runtime by default (its `knownHelpers` list is an
 optimization). Block helpers do have one, because an unknown block has to
-fail at compile time. It comes from the registrations (see below).
+fail. It comes from the registrations, and the render checks it before
+writing anything (see below).
 
 `test/helpers.goose`, `test/registration.goose` and `examples/http` have
 more examples.
@@ -187,11 +188,10 @@ Block helpers are a second function, passed after the helpers. It takes
 the same registry and registers each helper with `block_helper`. It has to
 be a named function: it's generic over its body `B`, which a block can't
 be. A render call takes one trailing block, the last argument, so with
-block helpers the expression helpers are a named function too. Give the
-same function to `get_engine` (or `load_engine`) as well. The engine reads
-the registered names from it, like handlebars.js's `knownHelpers`. So
-`{{#typo}}` fails at compile time with `unknown block helper #typo`, and
-the list can't drift from the helpers:
+block helpers the expression helpers are a named function too. The render
+reads the registered names from it, like handlebars.js's `knownHelpers`.
+So `{{#typo}}` makes the render fail with `unknown block helper "typo"`
+before it writes anything, and the list can't drift from the helpers:
 
 ```goose
 fn blocks<B>(reg) {
@@ -211,19 +211,18 @@ fn blocks<B>(reg) {
     };
 }
 
-let engine = gooseneck::get_engine("{{#list books as |book i|}}{{#bold}}{{book.title}}{{/bold}} #{{i}}{{/list}}", blocks);
+let engine = gooseneck::get_engine("{{#list books as |book i|}}{{#bold}}{{book.title}}{{/bold}} #{{i}}{{/list}}");
 gooseneck::render_into(engine, shelf, out, book_helpers, blocks);
 // <ul><li><b>Frankenstein</b> #0</li><li><b>Dune</b> #1</li></ul>
 ```
 
 The matching registration's block runs, and that answers the call. To get
-the names, `get_engine` calls the function once on a listing registry.
+the names, the render calls the function once on a listing registry.
 Each `block_helper` then adds its name and skips its block, so nothing is
 written and no body runs.
 
-Each block helper name is registered once, too. Given to `get_engine` or
-`load_engine`, a name registered twice fails there, at compile time, with
-`duplicate block helper "bold"`; a render checks it again, as it does for
+Each block helper name is registered once, too: a name registered twice
+makes the render fail with `duplicate block helper "bold"`, as for
 helpers. A name may be both a helper and a block helper: `{{bold}}` and
 `{{#bold}}...{{/bold}}` can't be confused.
 
@@ -341,6 +340,8 @@ it and the latest results.
   compile-time reflection) or JSON text and files.
 - **Clear compile errors**: `unexpected /with`, `unclosed #each`,
   `unclosed subexpression: (eq a b`, `#if takes exactly one argument`, and more.
+  Render errors for the helpers, before anything is written:
+  `unknown block helper "typo"`, `duplicate helper "now"`.
 
 ### Not yet
 
@@ -365,9 +366,9 @@ it and the latest results.
   `[object Object]` or a comma-joined list).
 - A call no registered helper answers renders nothing and is falsy
   (handlebars.js throws `Missing helper`).
-- A helper registered twice is only found when a render runs (block
-  helpers given to `get_engine` are found there): Goose can't check it
-  while compiling your code.
+- A helper registered twice, or a block no block helper registers, is only
+  found when a render runs, not when the template compiles or when Goose
+  compiles your code (see [Design (a)](#a-helpers-are-one-static-function-that-fills-in-a-context)).
 - Iterating a *typed struct* as an object, or looking up one of its fields
   with a dynamic key (`{{lookup person field}}`), only sees the fields the
   template names elsewhere: in a path, or as a literal lookup key such as
@@ -427,9 +428,16 @@ Duplicate names can't be found while Goose compiles your code: your
 function is just code, and only running it says which names it
 registers. So each render runs it once on a listing registry first, where
 every registration gives its name instead of running its block, and a
-name given twice is the render's error. `get_engine` and `load_engine` do
-the same for the block helpers they're given, so a duplicate block helper
-fails at compile time there.
+name given twice is the render's error. The same listing gives the block
+helper names, so a block of the template that none of them registers is
+the render's error too.
+
+That's also why the helpers are given to the render, not to `get_engine`.
+The engine would have to keep them to use them later, and a function value
+can't be stored in a struct (§7.6). Giving the block helpers to
+`get_engine` only for their names, and again to the render to run them,
+would be two places to keep in sync; so the render takes both and checks
+everything before it writes.
 
 Block helpers are a separate function for the same reason, plus one more:
 a block helper gets its body, `B`, as a static function value too. The
