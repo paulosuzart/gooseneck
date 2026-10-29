@@ -1524,9 +1524,14 @@ fn get_engine(template: const u8[:]) -> Engine {
 // get_engine with the user's block helpers G: the blocks G registers with
 // block_helper, {{#list items}} say, are the ones a template may open
 // besides the built-in ones.
+//
+// G registers each name once: a name it registers twice is the error
+// duplicate block helper "name".
 fn get_engine<G>(template: const u8[:]) -> Engine {
     let names: u8[>..] = [];
-    _registered_blocks(names, G);
+    _block_helper_names(names, G);
+    let duplicate = _duplicate_error("block helper", names);
+    guard duplicate.len == 0 else { return _failed(duplicate); }
     let config = Config { block_helpers: words(names) };
     return _compile(template, "", config);
 }
@@ -1539,10 +1544,12 @@ fn load_engine(path: const u8[:]) -> Engine {
 
 // load_engine with the user's block helpers G, as get_engine.
 fn load_engine<G>(path: const u8[:]) -> Engine {
+    let names: u8[>..] = [];
+    _block_helper_names(names, G);
+    let duplicate = _duplicate_error("block helper", names);
+    guard duplicate.len == 0 else { return _failed(duplicate); }
     let source: u8[>..] = [];
     guard read_file(path, source) else { return _failed(str("cannot read template ", path)); }
-    let names: u8[>..] = [];
-    _registered_blocks(names, G);
     let config = Config { block_helpers: words(names) };
     return _compile(source, str(path, ": "), config);
 }
@@ -1692,12 +1699,14 @@ recursive fn _doc_struct<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key
 // The user's helpers are one static function value (spec §7.6), passed as
 // the last argument of a render function: a named function, or a block,
 // which may capture the caller's locals and so carries any state the
-// helpers need. It takes the call's HelperContext, as plod's handlers take
-// a request's cx, and answers the call by filling it in:
+// helpers need. It takes a Registry, as plod's routes take a request's cx,
+// and registers each helper by name with helper(reg, name). The block of a
+// registration takes the call's HelperContext and answers the call by
+// filling it in:
 //
-//     fn my_helpers(cx) {
-//         gooseneck::helper(cx, "loud") { gooseneck::answer(cx, loud(cx)); };
-//         gooseneck::helper(cx, "count") {
+//     fn my_helpers(reg) {
+//         gooseneck::helper(reg, "loud") { cx => gooseneck::answer(cx, loud(cx)); };
+//         gooseneck::helper(reg, "count") { cx =>
 //             gooseneck::answer(cx, json::Value.Int { v: gooseneck::param_count(cx) });
 //         };
 //     }
@@ -1706,26 +1715,33 @@ recursive fn _doc_struct<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key
 // or, as a block that keeps state in a local of its caller:
 //
 //     var calls: i64 = 0;
-//     gooseneck::render_into(engine, context, out) { cx =>
-//         gooseneck::helper(cx, "next") {
+//     gooseneck::render_into(engine, context, out) { reg =>
+//         gooseneck::helper(reg, "next") { cx =>
 //             calls += 1;
 //             gooseneck::answer(cx, json::Value.Int { v: calls });
 //         };
 //     };
 //
 // Its parameter is untyped, as a plod handler's cx is. The render passes
-// the context with & so that a block gets it by reference rather than a
-// copy, and a function that types it as HelperContext& makes that & a
+// the registry with & so that a block gets it by reference rather than a
+// copy, and a function that types it as Registry& makes that & a
 // "redundant &" warning (spec §4.1); an untyped one does not.
 //
 // It is called for each {{helper args}} mustache and each (helper args)
 // subexpression, with the helper's name and its arguments already resolved
-// in cx, and for each bare {{name}} (see _may_be_helper), with no
-// arguments, before name is looked up as a field. Each helper(cx, name)
-// registration runs its block when the call is to name and no registration
-// before it answered; the block answers with answer(cx, value), or leaves
-// the call to the registrations after it. A call nobody answers leaves a
-// bare {{name}} to the field.
+// in the call, and for each bare {{name}} (see _may_be_helper), with no
+// arguments, before name is looked up as a field. The registration of name
+// runs its block when the call is to name; the block answers with
+// answer(cx, value), or leaves a bare {{name}} to the field.
+//
+// Each name is registered once. Before a render walks anything, it runs
+// the helpers once on a listing Registry, where each registration gives
+// its name instead of running its block, and a name registered twice is
+// the render's error, duplicate helper "name", with nothing written.
+// (Helpers given inline to a render are not known before it, so that is
+// where the check can be; the listing costs one call of the helpers per
+// render.) A name may be both a helper and a block helper: {{name}} and
+// {{#name}} cannot be confused.
 //
 // A value is a scalar: Str, Int, Num, Bool or Null. A mustache writes it
 // as it would a field's value, escaped or not; {{#if}} tests its
@@ -1736,9 +1752,9 @@ recursive fn _doc_struct<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key
 // same name: it finds a context node, not a scalar, which no user helper
 // can give. (handlebars.js lets registerHelper replace it.) A call nobody
 // answers gives Null, which writes nothing and is false. (handlebars.js
-// throws "Missing helper" at render time; these renders have no error to
-// return once the template compiled.) The render functions without helpers
-// answer nothing.
+// throws "Missing helper" at render time; here, which helpers a template
+// calls is not checked, only how they are registered.) The render
+// functions without helpers answer nothing.
 //
 // A helper's text must outlive the call, since its value may be another
 // call's argument: a slice of the context, of the template, or of cx.text,
@@ -1760,15 +1776,14 @@ struct Resolved { key: const u8[:], value: json::Value }
 //   of resolved, a stack that each call pushes onto and pops when done;
 // - text: where a helper makes new text, alive until the render ends;
 // - out: the render's output, where a block helper writes its block;
-// - value and answered: the answer, which answer and block_helper fill in;
-// - listing: set only while an engine asks the block helpers for their
-//   names (see _registered_blocks), never in a render.
+// - value and answered: the answer, which answer and block_helper fill in.
 //
-// The render keeps one HelperContext and fills it in for each call, and a
-// block helper's call gets a copy of it, since its body makes calls of its
-// own. Only references are passed down the render's recursive walk, never
-// stored in a struct built there (spec §7.8), so the context is made once,
-// outside the walk, and the name travels in it.
+// The render keeps one Registry, and in it one HelperContext that it fills
+// in for each call, and a block helper's call gets a copy of it, since its
+// body makes calls of its own. Only references are passed down the
+// render's recursive walk, never stored in a struct built there (spec
+// §7.8), so the registry is made once, outside the walk, and the name
+// travels in it.
 struct HelperContext {
     name: const u8[:] = "",
     resolved: const Resolved[>..<]&,
@@ -1778,6 +1793,13 @@ struct HelperContext {
     out: u8[>..]&,
     value: json::Value = json::Value.Null,
     answered: bool = false,
+}
+
+// What the user's helpers register on: the call being made, which the
+// registration of call.name answers, or, while listing, where each
+// registration gives its name instead (see _helper_names).
+struct Registry {
+    call: HelperContext,
     listing: bool = false,
 }
 
@@ -1813,14 +1835,67 @@ fn answer(cx: HelperContext&, value: json::Value) {
     cx.answered = true;
 }
 
-// Registers the helper name: runs F, which answers the call with answer,
-// when cx is a call to name that no registration before has answered.
-inline fn helper<F>(cx: HelperContext&, name: const u8[:]) {
-    if !cx.answered && cx.name == name { F(); }
+// Registers the helper name: when the call is to name, runs F on it, and F
+// answers it with answer. While listing, gives name instead.
+inline fn helper<F>(reg: Registry&, name: const u8[:]) {
+    if reg.listing {
+        _list_name(reg, name);
+    } else if reg.call.name == name {
+        F(&reg.call);
+    }
 }
 
 // Knows no helper: what the render functions without helpers use.
-fn _no_helpers(cx) {}
+fn _no_helpers(reg) {}
+
+// While listing, appends name to reg.call.text, one per line.
+fn _list_name(reg: Registry&, name: const u8[:]) {
+    reg.call.text.append(name);
+    reg.call.text.push('\n');
+}
+
+// Appends the names that the helpers F register to names, one per line: F
+// runs once on a listing Registry, where no registration runs its block.
+fn _helper_names<F>(names: u8[>..]&) {
+    let resolved: Resolved[>..<] = [];
+    let none = Range { first: 0, count: 0 };
+    let out: u8[>..] = [];
+    let call = HelperContext { resolved: resolved, params: none, hash: none, text: names, out: out };
+    var reg = Registry { call: call, listing: true };
+    F(reg);
+}
+
+// The first name that names, one per line, holds twice, or "".
+fn _first_duplicate(names: const u8[:]) -> const u8[:] {
+    let list = words(names);
+    for i in list.len {
+        for j in i {
+            if list[j] == list[i] { return list[i]; }
+        }
+    }
+    return "";
+}
+
+// The error for a kind of helper ("helper" or "block helper") whose names,
+// one per line, hold one twice, such as duplicate helper "now"; empty when
+// each is there once.
+fn _duplicate_error(kind: const u8[:], names: const u8[:]) -> u8[>..] {
+    let twice = _first_duplicate(names);
+    guard twice.len > 0 else { return []; }
+    return str("duplicate ", kind, " \"", twice, "\"");
+}
+
+// The error for helpers F and block helpers G that register a name twice,
+// empty when each name is registered once: what a render checks first.
+fn _registration_error<F, G>() -> u8[>..] {
+    let names: u8[>..] = [];
+    _helper_names(names, F);
+    let duplicate = _duplicate_error("helper", names);
+    guard duplicate.len == 0 else { return duplicate; }
+    let block_names: u8[>..] = [];
+    _block_helper_names(block_names, G);
+    return _duplicate_error("block helper", block_names);
+}
 
 // ---------------------------------------------------------------------------
 // Block helpers.
@@ -1829,12 +1904,14 @@ fn _no_helpers(cx) {}
 // after the helpers to a render function, and to get_engine or
 // load_engine. It is called as
 //
-//     block_helpers<B>(cx: HelperContext&)
+//     block_helpers<B>(reg: Registry&)
 //
 // for each {{#name args}}...{{/name}} that is not a built-in block, with
-// the arguments resolved in cx as a helper's are. Each
-// block_helper(cx, name) registration runs its block when the call is to
-// name, and that answers the call. The block writes straight into cx.out,
+// the arguments resolved in the call as a helper's are. The
+// block_helper(reg, name) registration runs its block on the call's
+// HelperContext cx when the call is to name, and that answers the call.
+// Each name is registered once, as a helper's. The block writes straight
+// into cx.out,
 // and calls B, the block's body, as often as it likes, each time with the
 // context the body runs on:
 //
@@ -1850,13 +1927,13 @@ fn _no_helpers(cx) {}
 // parameters of {{#name args as |a b|}} are, like #each's, the context the
 // body runs on and the item's @key (an element's only). For example:
 //
-//     fn blocks<B>(cx) {
-//         gooseneck::block_helper(cx, "bold") {
+//     fn blocks<B>(reg) {
+//         gooseneck::block_helper(reg, "bold") { cx =>
 //             cx.out.append("<b>");
 //             B(gooseneck::this());
 //             cx.out.append("</b>");
 //         };
-//         gooseneck::block_helper(cx, "list") {
+//         gooseneck::block_helper(reg, "list") { cx =>
 //             cx.out.append("<ul>");
 //             for k in gooseneck::length(gooseneck::param(cx, 0)) {
 //                 cx.out.append("<li>");
@@ -1871,10 +1948,11 @@ fn _no_helpers(cx) {}
 //
 // Given to get_engine or load_engine, the function also gives the names
 // of its block helpers, which a template may open: the engine calls it
-// once with cx.listing set, where each block_helper adds its name instead
-// of running its block. So {{#typo}} is a compile error, as with
+// once on a listing Registry, where each block_helper gives its name
+// instead of running its block. So {{#typo}} is a compile error, as with
 // handlebars.js's knownHelpers, and the names cannot drift from the
-// helpers.
+// helpers. A name registered twice is the engine's error, duplicate block
+// helper "name", there, and the render's, as a helper's, otherwise.
 //
 // Its body runs inside the render's recursive walk, so the limits of
 // spec §7.8 hold there: no growable local (a u8[>..] buffer, say) may be in
@@ -1930,34 +2008,27 @@ fn append_escaped(out: u8[>..]&, text: const u8[:]) {
     _append_html_escaped(out, text);
 }
 
-// Registers the block helper name: when cx is a call to name that no
-// registration before has answered, runs F, which writes the block into
-// cx.out and calls B, and answers the call. While cx.listing, it appends
-// name to cx.text, one per line, instead.
-inline fn block_helper<F>(cx: HelperContext&, name: const u8[:]) {
-    if cx.listing {
-        cx.text.append(name);
-        cx.text.push('\n');
-        return;
+// Registers the block helper name: when the call is to name, runs F on
+// it, which writes the block into cx.out and calls B, and answers the
+// call. While listing, gives name instead.
+inline fn block_helper<F>(reg: Registry&, name: const u8[:]) {
+    if reg.listing {
+        _list_name(reg, name);
+    } else if reg.call.name == name {
+        F(&reg.call);
+        reg.call.answered = true;
     }
-    guard !cx.answered && cx.name == name else { return; }
-    F();
-    cx.answered = true;
 }
 
 // The block helpers of the render functions that take none.
-fn _no_block_helpers<B>(cx) {}
+fn _no_block_helpers<B>(reg) {}
 
-// Appends the names of the block helpers that G registers with
-// block_helper to names, one per line: G runs once with cx.listing set,
-// and with a B that walks nothing.
-fn _registered_blocks<G>(names: u8[>..]&) {
+// Appends the names of the block helpers that G registers to names, one
+// per line, as _helper_names does, with a B that walks nothing.
+fn _block_helper_names<G>(names: u8[>..]&) {
     fn no_body(part: Body) -> bool { return false; }
-    let resolved: Resolved[>..<] = [];
-    let none = Range { first: 0, count: 0 };
-    let out: u8[>..] = [];
-    var cx = HelperContext { resolved: resolved, params: none, hash: none, text: names, out: out, listing: true };
-    G(cx, no_body);
+    fn blocks(reg) { G(reg, no_body); }
+    _helper_names(names, blocks);
 }
 
 // ---------------------------------------------------------------------------
@@ -1977,7 +2048,8 @@ struct ParamFrame { frame: i64, key: json::Value }
 // the helper arguments. A frame is a node of the context document; the
 // first is its root. loops holds one Loop per {{#each}} being walked, the
 // innermost last. resolved is the stack of resolved helper arguments, and
-// helper is the context of the current helper call, which views them.
+// registry is what the user's helpers register on, with the current
+// helper call, which views them.
 // params holds one
 // ParamFrame per block with block parameters whose body is being walked,
 // the innermost last, which a ParamRef counts back from. All are owned by
@@ -1989,7 +2061,7 @@ struct RenderContext {
     loops: Loop[>..<]&,
     params: ParamFrame[>..<]&,
     resolved: Resolved[>..<]&,
-    helper: HelperContext,
+    registry: Registry,
 }
 
 // Resolves path on the stack to a node, or null. Each leading ../ (or ..)
@@ -2192,30 +2264,30 @@ recursive fn _call_helper<F>(name: Span, params: Range, hash: Range, rc: RenderC
     _push_resolved(params, rc, F);
     _push_resolved(hash, rc, F);
     _start_call(rc, name, Range { first: mark, count: params.count }, Range { first: mark + params.count, count: hash.count });
-    F(&rc.helper);
+    F(&rc.registry);
     rc.resolved.resize(mark);
-    return rc.helper.value;
+    return rc.registry.call.value;
 }
 
-// Readies rc.helper for a call to the helper name with params and hash:
-// unanswered, with a Null value.
+// Readies rc.registry.call for a call to the helper name with params and
+// hash: unanswered, with a Null value.
 fn _start_call(rc: RenderContext&, name: Span, params: Range, hash: Range) {
-    rc.helper.name = _span_text(rc.engine.text, name);
-    rc.helper.params = params;
-    rc.helper.hash = hash;
-    rc.helper.value = json::Value.Null;
-    rc.helper.answered = false;
+    rc.registry.call.name = _span_text(rc.engine.text, name);
+    rc.registry.call.params = params;
+    rc.registry.call.hash = hash;
+    rc.registry.call.value = json::Value.Null;
+    rc.registry.call.answered = false;
 }
 
 // Calls the helper name of F with no arguments, for a bare {{name}}, and
-// returns whether F answered, with its value in rc.helper.value. lookup
-// without arguments answers Null.
+// returns whether F answered, with its value in rc.registry.call.value.
+// lookup without arguments answers Null.
 fn _bare_helper<F>(name: Span, rc: RenderContext&) -> bool {
     let none = Range { first: rc.resolved.len, count: 0 };
     _start_call(rc, name, none, none);
     guard !_is_lookup(rc, name) else { return true; }
-    F(&rc.helper);
-    return rc.helper.answered;
+    F(&rc.registry);
+    return rc.registry.call.answered;
 }
 
 // Whether a call is to the built-in lookup.
@@ -2463,9 +2535,9 @@ recursive fn _walk_body<F, G>(node: const Node&, body: Body, rc: RenderContext&)
 }
 
 // Runs a user block helper: resolves its arguments, then hands G a copy of
-// rc.helper filled in for the call (the body's own calls reuse rc.helper)
-// and body, the B of the description under Block helpers. The arguments
-// are popped once G returns.
+// rc.registry filled in for the call (the body's own calls reuse
+// rc.registry) and body, the B of the description under Block helpers.
+// The arguments are popped once G returns.
 recursive fn _eval_user_block<F, G>(node: const Node&, rc: RenderContext&) {
     fn body(part: Body) -> bool {
         return _walk_body(node, part, rc, F, G);
@@ -2473,12 +2545,12 @@ recursive fn _eval_user_block<F, G>(node: const Node&, rc: RenderContext&) {
     let mark = rc.resolved.len;
     _push_resolved(node.params, rc, F);
     _push_resolved(node.hash, rc, F);
-    var cx = rc.helper;
-    cx.name = _span_text(rc.engine.text, node.value);
-    cx.params = Range { first: mark, count: node.params.count };
-    cx.hash = Range { first: mark + node.params.count, count: node.hash.count };
-    cx.answered = false;
-    G(&cx, body);
+    var reg = rc.registry;
+    reg.call.name = _span_text(rc.engine.text, node.value);
+    reg.call.params = Range { first: mark, count: node.params.count };
+    reg.call.hash = Range { first: mark + node.params.count, count: node.hash.count };
+    reg.call.answered = false;
+    G(&reg, body);
     rc.resolved.resize(mark);
 }
 
@@ -2513,7 +2585,7 @@ recursive fn _evaluate_node<F, G>(index: i64, rc: RenderContext&) {
         Expression => {
             if node.helper_first {
                 if _bare_helper(node.value, rc, F) {
-                    _write_value(rc.helper.value, node.escaped, rc);
+                    _write_value(rc.registry.call.value, node.escaped, rc);
                 } else {
                     _eval_expression(value, node.param_ref, node.escaped, rc);
                 }
@@ -2541,8 +2613,9 @@ fn _evaluate<F, G>(engine: const Engine&, doc: const json::Node[>..]&, out: u8[>
     let resolved: Resolved[>..<] = [];
     let text: u8[>..] = [];
     let none = Range { first: 0, count: 0 };
-    let helper = HelperContext { resolved: resolved, params: none, hash: none, text: text, out: out };
-    let rc = RenderContext { out: out, stack: stack, engine: engine, loops: loops, params: params, resolved: resolved, helper: helper };
+    let call = HelperContext { resolved: resolved, params: none, hash: none, text: text, out: out };
+    let registry = Registry { call: call };
+    let rc = RenderContext { out: out, stack: stack, engine: engine, loops: loops, params: params, resolved: resolved, registry: registry };
     var index: i64 = 0;
     while index < engine.roots.len {
         _evaluate_node(engine.roots[index], rc, F, G);
@@ -2552,33 +2625,37 @@ fn _evaluate<F, G>(engine: const Engine&, doc: const json::Node[>..]&, out: u8[>
 
 // Renders engine with the fields of a typed context, appending to out.
 // Returns how many nodes the converted context took, which is what the
-// filtered conversion saves on. An engine that carries an error writes
-// nothing and returns 0; check engine.error first.
-fn render_into<T>(engine: const Engine&, context: const T&, out: u8[>..]&) -> i64 {
+// filtered conversion saves on, and the error, empty when the render
+// holds: engine.error, or a helper registered twice, such as duplicate
+// helper "now". On an error out is left as it was and the count is 0.
+fn render_into<T>(engine: const Engine&, context: const T&, out: u8[>..]&) -> i64, u8[>..] {
     return render_into(engine, context, out, _no_helpers);
 }
 
 // render_into with helpers: F is the user's helpers, as described under
 // Helpers above.
-fn render_into<T, F>(engine: const Engine&, context: const T&, out: u8[>..]&) -> i64 {
+fn render_into<T, F>(engine: const Engine&, context: const T&, out: u8[>..]&) -> i64, u8[>..] {
     return render_into(engine, context, out, F, _no_block_helpers);
 }
 
 // render_into with helpers F and block helpers G, as described under
 // Block helpers above.
-fn render_into<T, F, G>(engine: const Engine&, context: const T&, out: u8[>..]&) -> i64 {
-    guard engine.error.len == 0 else { return 0; }
+fn render_into<T, F, G>(engine: const Engine&, context: const T&, out: u8[>..]&) -> i64, u8[>..] {
+    guard engine.error.len == 0 else { return 0, str(engine.error); }
+    let duplicate = _registration_error(F, G);
+    guard duplicate.len == 0 else { return 0, duplicate; }
     let names: const u8[:][>..] = [];
     _name_slices(engine, names);
     let doc: json::Node[>..] = [];
     _doc_struct(doc, names, "", context);
     _evaluate(engine, doc, out, F, G);
-    return doc.len;
+    return doc.len, [];
 }
 
 // Renders engine with a context parsed from JSON text, appending to out.
-// Returns the error, empty when the render holds: engine.error, or
-// json::parse's message, such as "json: expected ',' or '}' at byte 41".
+// Returns the error, empty when the render holds: engine.error, a helper
+// registered twice (see render_into), or json::parse's message, such as
+// "json: expected ',' or '}' at byte 41".
 // On an error out is left as it was.
 fn render_json(engine: const Engine&, json_text: const u8[:], out: u8[>..]&) -> u8[>..] {
     return render_json(engine, json_text, out, _no_helpers);
@@ -2592,6 +2669,8 @@ fn render_json<F>(engine: const Engine&, json_text: const u8[:], out: u8[>..]&) 
 // render_json with helpers F and block helpers G.
 fn render_json<F, G>(engine: const Engine&, json_text: const u8[:], out: u8[>..]&) -> u8[>..] {
     guard engine.error.len == 0 else { return str(engine.error); }
+    let duplicate = _registration_error(F, G);
+    guard duplicate.len == 0 else { return duplicate; }
     let doc: json::Node[>..] = [];
     let decoded: u8[>..] = [];
     let root, err = json::parse(json_text, doc, decoded);
@@ -2601,8 +2680,8 @@ fn render_json<F, G>(engine: const Engine&, json_text: const u8[:], out: u8[>..]
 }
 
 // Renders engine with a context read from the JSON file at path. Returns
-// the error, empty when the render holds: engine.error, "cannot read JSON
-// <path>", or "<path>: <json error>".
+// the error, empty when the render holds: engine.error, a helper
+// registered twice, "cannot read JSON <path>", or "<path>: <json error>".
 fn render_json_file(engine: const Engine&, path: const u8[:], out: u8[>..]&) -> u8[>..] {
     return render_json_file(engine, path, out, _no_helpers);
 }
@@ -2615,6 +2694,8 @@ fn render_json_file<F>(engine: const Engine&, path: const u8[:], out: u8[>..]&) 
 // render_json_file with helpers F and block helpers G.
 fn render_json_file<F, G>(engine: const Engine&, path: const u8[:], out: u8[>..]&) -> u8[>..] {
     guard engine.error.len == 0 else { return str(engine.error); }
+    let duplicate = _registration_error(F, G);
+    guard duplicate.len == 0 else { return duplicate; }
     let text: u8[>..] = [];
     guard read_file(path, text) else { return str("cannot read JSON ", path); }
     let err = render_json(engine, text, out, F, G);
@@ -2623,20 +2704,20 @@ fn render_json_file<F, G>(engine: const Engine&, path: const u8[:], out: u8[>..]
 }
 
 // Renders engine into text from the fields of context. The second result is
-// the error, engine.error, empty when the render holds; with an error the
-// text is empty.
-fn render<T>(engine: const Engine&, context: const T&) -> u8[>..], const u8[:] {
+// the error, as render_into's, empty when the render holds; with an error
+// the text is empty.
+fn render<T>(engine: const Engine&, context: const T&) -> u8[>..], u8[>..] {
     return render(engine, context, _no_helpers);
 }
 
 // render with helpers F.
-fn render<T, F>(engine: const Engine&, context: const T&) -> u8[>..], const u8[:] {
+fn render<T, F>(engine: const Engine&, context: const T&) -> u8[>..], u8[>..] {
     return render(engine, context, F, _no_block_helpers);
 }
 
 // render with helpers F and block helpers G.
-fn render<T, F, G>(engine: const Engine&, context: const T&) -> u8[>..], const u8[:] {
+fn render<T, F, G>(engine: const Engine&, context: const T&) -> u8[>..], u8[>..] {
     let out: u8[>..] = [];
-    render_into(engine, context, out, F, G);
-    return out, engine.error;
+    let nodes, err = render_into(engine, context, out, F, G);
+    return out, err;
 }

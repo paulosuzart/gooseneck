@@ -144,10 +144,10 @@ fn main() {
     // The built-in wins over a user helper named lookup.
     let engine = gooseneck::get_engine("{{lookup names 0}} {{shout names}}");
     let out: u8[>..] = [];
-    gooseneck::render_into(engine, context, out) { cx =>
-        gooseneck::helper(cx, "lookup") { gooseneck::answer(cx, json::Value.Str { s: "user" }); };
-        gooseneck::helper(cx, "shout") { gooseneck::answer(cx, json::Value.Str { s: "user" }); };
+    let nodes, err = gooseneck::render_into(engine, context, out) { reg =>
+        gooseneck::helper(reg, "lookup") { cx => gooseneck::answer(cx, json::Value.Str { s: "user" }); };
+        gooseneck::helper(reg, "shout") { cx => gooseneck::answer(cx, json::Value.Str { s: "user" }); };
     };
-    if out != "Ada user" { fail("built-in wins", "struct", "", out, "Ada user"); }
+    if err.len > 0 || out != "Ada user" { fail("built-in wins", "struct", err, out, "Ada user"); }
     print("built-in wins");
 }

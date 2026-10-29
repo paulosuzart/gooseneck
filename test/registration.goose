@@ -1,10 +1,11 @@
-// How registrations dispatch: helper(cx, name) and block_helper(cx, name),
-// the first registration that answers a call wins, a block that does not
-// answer leaves the call to the ones after it, names match whole, a helper
-// beats a field of its name, and get_engine and load_engine take the block
-// helper names from the registrations. Each case asserts, then prints its
-// name; scripts/test.sh compares that list with
-// test/expected/registration.out.
+// How registrations dispatch: helper(reg, name) and block_helper(reg, name),
+// a block that does not answer leaves a bare name to the field, names match
+// whole, a helper beats a field of its name, a name may be both a helper
+// and a block helper, get_engine and load_engine take the block helper
+// names from the registrations, and a name registered twice is an error:
+// the engine's for block helpers given to get_engine or load_engine, the
+// render's otherwise. Each case asserts, then prints its name;
+// scripts/test.sh compares that list with test/expected/registration.out.
 import handlebars from "../gooseneck";
 
 struct Item { name: const u8[:] }
@@ -51,28 +52,44 @@ fn is_true(value: json::Value) -> bool {
     }
 }
 
-fn helpers(cx) {
-    gooseneck::helper(cx, "loud") { gooseneck::answer(cx, loud(cx)); };
-    gooseneck::helper(cx, "count") { gooseneck::answer(cx, json::Value.Int { v: gooseneck::param_count(cx) }); };
+fn helpers(reg) {
+    gooseneck::helper(reg, "loud") { cx => gooseneck::answer(cx, loud(cx)); };
+    gooseneck::helper(reg, "count") { cx => gooseneck::answer(cx, json::Value.Int { v: gooseneck::param_count(cx) }); };
     // A helper with the name of a field wins over it, as in handlebars.js.
-    gooseneck::helper(cx, "title") { gooseneck::answer(cx, json::Value.Str { s: "helper" }); };
-    // kind answers strings here, and leaves anything else unanswered, to
-    // the next registration of kind.
-    gooseneck::helper(cx, "kind") {
+    gooseneck::helper(reg, "title") { cx => gooseneck::answer(cx, json::Value.Str { s: "helper" }); };
+    // kind answers strings, and leaves anything else unanswered.
+    gooseneck::helper(reg, "kind") { cx =>
         if is_string(gooseneck::param(cx, 0)) { gooseneck::answer(cx, json::Value.Str { s: "string" }); }
     };
-    gooseneck::helper(cx, "kind") { gooseneck::answer(cx, json::Value.Str { s: "other" }); };
-    // The first registration that answers wins: this one never runs.
-    gooseneck::helper(cx, "count") { gooseneck::answer(cx, json::Value.Str { s: "shadowed" }); };
+    // flag answers only a call with arguments: a bare {{flag}} is the field.
+    gooseneck::helper(reg, "flag") { cx =>
+        if gooseneck::param_count(cx) > 0 { gooseneck::answer(cx, json::Value.Str { s: "helper" }); }
+    };
+    // bold is a block helper too.
+    gooseneck::helper(reg, "bold") { cx => gooseneck::answer(cx, json::Value.Str { s: "B" }); };
 }
 
-fn blocks<B>(cx) {
-    gooseneck::block_helper(cx, "bold") {
+// Registers count twice.
+fn twice_helpers(reg) {
+    gooseneck::helper(reg, "loud") { cx => gooseneck::answer(cx, loud(cx)); };
+    gooseneck::helper(reg, "count") { cx => gooseneck::answer(cx, json::Value.Int { v: 1 }); };
+    gooseneck::helper(reg, "count") { cx => gooseneck::answer(cx, json::Value.Int { v: 2 }); };
+}
+
+// Registers bold twice.
+fn twice_blocks<B>(reg) {
+    gooseneck::block_helper(reg, "bold") { cx => B(gooseneck::this()); };
+    gooseneck::block_helper(reg, "raw") { cx => B(gooseneck::this()); };
+    gooseneck::block_helper(reg, "bold") { cx => B(gooseneck::this()); };
+}
+
+fn blocks<B>(reg) {
+    gooseneck::block_helper(reg, "bold") { cx =>
         cx.out.append("<b>");
         B(gooseneck::this());
         cx.out.append("</b>");
     };
-    gooseneck::block_helper(cx, "list") {
+    gooseneck::block_helper(reg, "list") { cx =>
         cx.out.append("<ul>");
         for k in gooseneck::length(gooseneck::param(cx, 0)) {
             cx.out.append("<li>");
@@ -81,14 +98,14 @@ fn blocks<B>(cx) {
         }
         cx.out.append("</ul>");
     };
-    gooseneck::block_helper(cx, "when") {
+    gooseneck::block_helper(reg, "when") { cx =>
         if is_true(gooseneck::param(cx, 0)) {
             B(gooseneck::this());
         } else {
             B(gooseneck::inverse(gooseneck::this()));
         }
     };
-    gooseneck::block_helper(cx, "raw") { B(gooseneck::this()); };
+    gooseneck::block_helper(reg, "raw") { cx => B(gooseneck::this()); };
 }
 
 fn show(s: const u8[:]) -> u8[>..] {
@@ -127,19 +144,38 @@ fn check_rejected(label: const u8[:], template: const u8[:], want: const u8[:]) 
     print(label);
 }
 
+// Renders template with helpers F and block helpers G, one of which
+// registers a name twice, through each render function; each must fail with want and
+// write nothing. The engine is compiled with the registered block helpers.
+fn check_render_error<F, G>(label: const u8[:], template: const u8[:], context: const Page&, want: const u8[:]) {
+    let engine = gooseneck::get_engine(template, blocks);
+    let out, err = gooseneck::render(engine, context, F, G);
+    if err != want || out.len > 0 { fail(label, "render", err, out, want); }
+    let into: u8[>..] = [];
+    let nodes, into_err = gooseneck::render_into(engine, context, into, F, G);
+    if into_err != want || into.len > 0 || nodes != 0 { fail(label, "render_into", into_err, into, want); }
+    let json_out: u8[>..] = [];
+    let json_err = gooseneck::render_json(engine, CONTEXT_JSON, json_out, F, G);
+    if json_err != want || json_out.len > 0 { fail(label, "render_json", json_err, json_out, want); }
+    let file_err = gooseneck::render_json_file(engine, "no such file.json", json_out, F, G);
+    if file_err != want || json_out.len > 0 { fail(label, "render_json_file", file_err, json_out, want); }
+    print(label);
+}
+
 fn main() {
     let items: Item[>..] = [Item { name: "pen" }, Item { name: "ink" }];
     let context = Page { name: "ada <3", title: "field", flag: true, items: items };
 
     // Helpers.
     check("registered helper", "{{loud name}}", context, "ADA &lt;3");
-    check("first answer wins", "{{count 1 2 3}}", context, "3");
+    check("helper counts its params", "{{count 1 2 3}}", context, "3");
     check("unknown helper renders nothing", "[{{nope 1}}]", context, "[]");
     check("bare name without a helper is the field", "{{name}}", context, "ada &lt;3");
     check("helper wins over a field", "{{title}}", context, "helper");
     check("helper wins over a field, ./ is the field", "{{./title}}", context, "field");
     check("block that answers", "{{kind name}}", context, "string");
-    check("block that does not answer leaves the next", "{{kind 1}}", context, "other");
+    check("block that does not answer gives nothing", "[{{kind 1}}]", context, "[]");
+    check("block that does not answer leaves the field", "{{flag}}|{{flag 1}}", context, "true|helper");
     check("subexpressions", "{{loud (loud name)}} {{count (count 1 2) 3}}", context, "ADA &lt;3 2");
     check("helper feeds #if", "{{#if (count)}}x{{else}}none{{/if}}", context, "none");
     check("name must match whole", "[{{lou name}}][{{louder name}}]", context, "[][]");
@@ -155,10 +191,33 @@ fn main() {
           "<b>0pen</b><b>1ink</b>");
     check_rejected("unknown block helper", "{{#nope}}x{{/nope}}", "unknown block helper #nope");
     check_rejected("block name must match whole", "{{#bol}}x{{/bol}}", "unknown block helper #bol");
+    check("helper and block helper of one name", "{{bold}}{{#bold}}x{{/bold}}", context, "B<b>x</b>");
 
     // load_engine takes the names the same way.
     let engine = gooseneck::load_engine(str(resource_dir(), "fixtures/registered.hbs"), blocks);
     let out, err = gooseneck::render(engine, context, helpers, blocks);
     if err.len > 0 || out != "<b>ADA &lt;3</b>\n" { fail("load_engine", "struct", err, out, "<b>ADA &lt;3</b>\n"); }
     print("load_engine");
+
+    // A name registered twice.
+    check_render_error("duplicate helper", "{{count}}", context, "duplicate helper \"count\"", twice_helpers, blocks);
+    check_render_error("duplicate block helper in a render", "{{name}}", context, "duplicate block helper \"bold\"", helpers, twice_blocks);
+    let twice_engine = gooseneck::get_engine("{{name}}", twice_blocks);
+    if twice_engine.error != "duplicate block helper \"bold\"" { fail("duplicate block helper", "get_engine", twice_engine.error, "", "duplicate block helper \"bold\""); }
+    print("duplicate block helper");
+    let twice_loaded = gooseneck::load_engine(str(resource_dir(), "fixtures/registered.hbs"), twice_blocks);
+    if twice_loaded.error != "duplicate block helper \"bold\"" { fail("duplicate block helper", "load_engine", twice_loaded.error, "", "duplicate block helper \"bold\""); }
+    print("duplicate block helper in load_engine");
+
+    // Inline, the check is the render's too.
+    let inline_engine = gooseneck::get_engine("{{now}}");
+    let inline_out: u8[>..] = [];
+    let nodes, inline_err = gooseneck::render_into(inline_engine, context, inline_out) { reg =>
+        gooseneck::helper(reg, "now") { cx => gooseneck::answer(cx, json::Value.Int { v: 1 }); };
+        gooseneck::helper(reg, "now") { cx => gooseneck::answer(cx, json::Value.Int { v: 2 }); };
+    };
+    if inline_err != "duplicate helper \"now\"" || inline_out.len > 0 || nodes != 0 {
+        fail("duplicate inline helper", "render_into", inline_err, inline_out, "");
+    }
+    print("duplicate inline helper");
 }

@@ -27,7 +27,7 @@ struct Shop {
 const CONTEXT_JSON: const u8[:] = "{\"title\":\"Shop <1>\",\"tags\":[\"new\",\"sale\"],\"items\":[{\"name\":\"pen\",\"price\":2},{\"name\":\"ink\",\"price\":0}],\"owner\":{\"first\":\"Ada\",\"last\":\"Lovelace\"},\"prices\":{\"pen\":2,\"ink\":0.5},\"empty\":[],\"flag\":true,\"off\":false}";
 
 // No expression helpers.
-fn helpers(cx) {}
+fn helpers(reg) {}
 
 // Appends a string value, HTML-escaped or as it is.
 fn append_string(out: u8[>..]&, value: json::Value, escaped: bool) {
@@ -47,24 +47,24 @@ fn is_true(value: json::Value) -> bool {
     }
 }
 
-fn blocks<B>(cx) {
+fn blocks<B>(reg) {
     // bold: "<b>" + options.fn(this) + "</b>"
-    gooseneck::block_helper(cx, "bold") {
+    gooseneck::block_helper(reg, "bold") { cx =>
         cx.out.append("<b>");
         B(gooseneck::this());
         cx.out.append("</b>");
     };
     // raw: options.fn(this)
-    gooseneck::block_helper(cx, "raw") {
+    gooseneck::block_helper(reg, "raw") { cx =>
         B(gooseneck::this());
     };
     // twice: options.fn(this) + options.fn(this)
-    gooseneck::block_helper(cx, "twice") {
+    gooseneck::block_helper(reg, "twice") { cx =>
         B(gooseneck::this());
         B(gooseneck::this());
     };
     // list: "<ul>" + each item as "<li>" + options.fn(item, { data, blockParams: [item, key] }) + "</li>" + "</ul>"
-    gooseneck::block_helper(cx, "list") {
+    gooseneck::block_helper(reg, "list") { cx =>
         cx.out.append("<ul>");
         for k in gooseneck::length(gooseneck::param(cx, 0)) {
             cx.out.append("<li>");
@@ -74,7 +74,7 @@ fn blocks<B>(cx) {
         cx.out.append("</ul>");
     };
     // backwards: options.fn(item, { data, blockParams: [item, key] }) for each item, last first
-    gooseneck::block_helper(cx, "backwards") {
+    gooseneck::block_helper(reg, "backwards") { cx =>
         var k = gooseneck::length(gooseneck::param(cx, 0));
         while k > 0 {
             k -= 1;
@@ -82,7 +82,7 @@ fn blocks<B>(cx) {
         }
     };
     // when: v === true ? options.fn(this) : options.inverse(this)
-    gooseneck::block_helper(cx, "when") {
+    gooseneck::block_helper(reg, "when") { cx =>
         if is_true(gooseneck::param(cx, 0)) {
             B(gooseneck::this());
         } else {
@@ -90,11 +90,11 @@ fn blocks<B>(cx) {
         }
     };
     // scope: options.fn(v, { blockParams: [v] })
-    gooseneck::block_helper(cx, "scope") {
+    gooseneck::block_helper(reg, "scope") { cx =>
         B(gooseneck::param(0));
     };
     // tag: "<" + name + " class=\"" + escape(class) + "\">" + options.fn(this) + "</" + name + ">"
-    gooseneck::block_helper(cx, "tag") {
+    gooseneck::block_helper(reg, "tag") { cx =>
         cx.out.append("<");
         append_string(cx.out, gooseneck::hash_arg(cx, "name"), false);
         cx.out.append(" class=\"");
@@ -106,13 +106,13 @@ fn blocks<B>(cx) {
         cx.out.append(">");
     };
     // label: escape(v) + ": " + options.fn(this)
-    gooseneck::block_helper(cx, "label") {
+    gooseneck::block_helper(reg, "label") { cx =>
         append_string(cx.out, gooseneck::param(cx, 0), true);
         cx.out.append(": ");
         B(gooseneck::this());
     };
     // try: v is an object ? options.fn(v, { blockParams: [v] }) : "missing"
-    gooseneck::block_helper(cx, "try") {
+    gooseneck::block_helper(reg, "try") { cx =>
         if !B(gooseneck::param(0)) { cx.out.append("missing"); }
     };
 }

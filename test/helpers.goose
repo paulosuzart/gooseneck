@@ -119,17 +119,17 @@ fn add(cx: const gooseneck::HelperContext&) -> json::Value {
     return json::Value.Null;
 }
 
-fn helpers(cx) {
-    gooseneck::helper(cx, "loud") { gooseneck::answer(cx, loud(cx)); };
-    gooseneck::helper(cx, "eq") {
+fn helpers(reg) {
+    gooseneck::helper(reg, "loud") { cx => gooseneck::answer(cx, loud(cx)); };
+    gooseneck::helper(reg, "eq") { cx =>
         gooseneck::answer(cx, json::Value.Bool { v: same(gooseneck::param(cx, 0), gooseneck::param(cx, 1)) });
     };
-    gooseneck::helper(cx, "id") { gooseneck::answer(cx, gooseneck::param(cx, 0)); };
-    gooseneck::helper(cx, "add") { gooseneck::answer(cx, add(cx)); };
-    gooseneck::helper(cx, "concat") { gooseneck::answer(cx, concat(cx)); };
-    gooseneck::helper(cx, "first") { gooseneck::answer(cx, json::Value.Str { s: "F<" }); };
-    gooseneck::helper(cx, "count") { gooseneck::answer(cx, json::Value.Int { v: gooseneck::param_count(cx) }); };
-    gooseneck::helper(cx, "zero") { gooseneck::answer(cx, json::Value.Null); };
+    gooseneck::helper(reg, "id") { cx => gooseneck::answer(cx, gooseneck::param(cx, 0)); };
+    gooseneck::helper(reg, "add") { cx => gooseneck::answer(cx, add(cx)); };
+    gooseneck::helper(reg, "concat") { cx => gooseneck::answer(cx, concat(cx)); };
+    gooseneck::helper(reg, "first") { cx => gooseneck::answer(cx, json::Value.Str { s: "F<" }); };
+    gooseneck::helper(reg, "count") { cx => gooseneck::answer(cx, json::Value.Int { v: gooseneck::param_count(cx) }); };
+    gooseneck::helper(reg, "zero") { cx => gooseneck::answer(cx, json::Value.Null); };
 }
 
 fn show(s: const u8[:]) -> u8[>..] {
@@ -226,21 +226,25 @@ fn main() {
     if err.len > 0 || out.len != 0 { fail("no helpers", "struct", err, out, ""); }
     print("no helpers");
 
-    // The helpers may be a block, given the context by reference.
+    // The helpers may be a block, given the registry by reference.
     let shouted: u8[>..] = [];
-    gooseneck::render_into(engine, context, shouted) { cx => gooseneck::answer(cx, upper(cx.text, gooseneck::param(cx, 0))); };
-    if shouted != "HELLO" { fail("block helpers", "struct", "", shouted, "HELLO"); }
+    let nodes, shout_err = gooseneck::render_into(engine, context, shouted) { reg =>
+        gooseneck::helper(reg, "loud") { cx => gooseneck::answer(cx, upper(cx.text, gooseneck::param(cx, 0))); };
+    };
+    if shout_err.len > 0 || shouted != "HELLO" { fail("block helpers", "struct", shout_err, shouted, "HELLO"); }
     print("block helpers");
 
     // A block may capture state: here a count of the calls.
     var calls: i64 = 0;
     let counted = gooseneck::get_engine("{{n a}},{{n a}},{{#if (n a)}}{{n a}}{{/if}}");
     let counted_out: u8[>..] = [];
-    gooseneck::render_into(counted, context, counted_out) { cx =>
-        calls += 1;
-        gooseneck::answer(cx, json::Value.Int { v: calls });
+    let counted_nodes, counted_err = gooseneck::render_into(counted, context, counted_out) { reg =>
+        gooseneck::helper(reg, "n") { cx =>
+            calls += 1;
+            gooseneck::answer(cx, json::Value.Int { v: calls });
+        };
     };
-    if counted_out != "1,2,4" || calls != 4 { fail("captured state", "struct", "", counted_out, "1,2,4"); }
+    if counted_err.len > 0 || counted_out != "1,2,4" || calls != 4 { fail("captured state", "struct", "", counted_out, "1,2,4"); }
     print("captured state");
 
     check_rejected("unclosed subexpression", "{{#if (eq a b}}x{{/if}}", context, "unclosed subexpression: (eq a b");

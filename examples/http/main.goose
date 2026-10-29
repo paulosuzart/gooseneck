@@ -70,10 +70,15 @@ fn hello(cx, name: const u8[:], requests: u64, page: const gooseneck::Engine&) {
         links: links,
     };
     let out: u8[>..] = [];
-    gooseneck::render_into(page, context, out) { cx => {
-        gooseneck::helper(cx, "ordinal") { gooseneck::answer(cx, helpers::ordinal(cx)); };
-        gooseneck::helper(cx, "now") { gooseneck::answer(cx, helpers::now()); };
-    }};
+    let nodes, err = gooseneck::render_into(page, context, out) { reg =>
+        gooseneck::helper(reg, "ordinal") { cx => gooseneck::answer(cx, helpers::ordinal(cx)); };
+        gooseneck::helper(reg, "now") { cx => gooseneck::answer(cx, helpers::now()); };
+    };
+    // A helper registered twice would be this error, on the first request.
+    guard err.len == 0 else {
+        print("cannot render: ", err);
+        plod::fail(cx, 500, "render_failed");
+    }
     plod::bytes(cx, 200, HTML, out);
 }
 

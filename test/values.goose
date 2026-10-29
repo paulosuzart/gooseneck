@@ -47,8 +47,7 @@ fn check(label: const u8[:], template: const u8[:], context: const Profile&, wan
 fn check_size(label: const u8[:], template: const u8[:], context: const Profile&, want_out: const u8[:], want_size: i64) {
     let out: u8[>..] = [];
     let t = gooseneck::get_engine(template);
-    let err = t.error;
-    let size = gooseneck::render_into(t, context, out);
+    let size, err = gooseneck::render_into(t, context, out);
     if err.len > 0 || out != want_out || size != want_size {
         print(label);
         print("err: ", err);
