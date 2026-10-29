@@ -13,7 +13,7 @@ fn _suffix(n: i64) -> const u8[:] {
     return "th";
 }
 
-fn _ordinal(cx: gooseneck::HelperContext&) -> json::Value {
+inline fn ordinal(cx: gooseneck::HelperContext&) -> json::Value {
     match gooseneck::param(cx, 0) {
         Int n => {
             let start = cx.text.len;
@@ -26,12 +26,6 @@ fn _ordinal(cx: gooseneck::HelperContext&) -> json::Value {
 }
 
 // The current time in whole seconds since the Unix epoch.
-fn _now() -> json::Value {
+inline fn now() -> json::Value {
     return json::Value.Int { v: time_ns() / 1000000000 };
-}
-
-// The helpers the template may call, one registration each.
-fn all(cx) {
-    gooseneck::helper(cx, "ordinal") { gooseneck::answer(cx, _ordinal(cx)); };
-    gooseneck::helper(cx, "now") { gooseneck::answer(cx, _now()); };
 }

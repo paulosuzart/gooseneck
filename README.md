@@ -1,8 +1,8 @@
 # gooseneck
 
-**Handlebars templates for Goose, compiled once and rendered fast.**
+**Handlebars _inspired_ templates for Goose, compiled once and rendered fast.**
 
-gooseneck is a Handlebars engine written in pure Goose. Compile a template
+`gooseneck` is a Handlebars engine written in pure Goose. Compile a template
 into an `Engine`, keep it for as long as you like (a global, a struct,
 an HTTP worker's state), and render it with a typed Goose struct or with
 JSON. Output matches [handlebars.js](https://handlebarsjs.com) 4.7.10 for
@@ -115,7 +115,7 @@ fn main() {
 }
 ```
 
-### Compiling
+### Preparing the template
 
 | call | what it does |
 |---|---|

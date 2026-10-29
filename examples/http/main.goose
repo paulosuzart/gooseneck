@@ -67,7 +67,10 @@ fn hello(cx, name: const u8[:], requests: u64, page: const gooseneck::Engine&) {
         links: links,
     };
     let out: u8[>..] = [];
-    gooseneck::render_into(page, context, out, helpers::all);
+    gooseneck::render_into(page, context, out) { cx => {
+        gooseneck::helper(cx, "ordinal") { gooseneck::answer(cx, helpers::ordinal(cx)); };
+        gooseneck::helper(cx, "now") { gooseneck::answer(cx, helpers::now()); };
+    }};
     plod::bytes(cx, 200, HTML, out);
 }
 
