@@ -1153,26 +1153,18 @@ fn _is_bool_literal(arg: Arg) -> bool {
     }
 }
 
-// What compiling needs to know beyond the template: the names of the
-// user's block helpers, which get_engine and load_engine read from their
-// registrations (see Block helpers below), as handlebars.js's
-// knownHelpers. A block whose helper is neither built in nor listed is a
-// compile error.
-struct Config { block_helpers: (const u8[:])[] }
-
-// Whether config lists helper as a user block helper.
-fn _is_user_block(config: const Config&, helper: const u8[:]) -> bool {
-    for known in config.block_helpers {
-        if known == helper { return true; }
-    }
-    return false;
+// Whether helper is one of the built-in blocks: with, each, if, unless.
+fn _is_built_in_block(helper: const u8[:]) -> bool {
+    return helper == "with" || helper == "each" || helper == "if" || helper == "unless";
 }
 
 // Checks a block's call against what its helper takes: with and each
 // exactly one param and no hash; if and unless exactly one param and at
-// most includeZero=true or false. A user block helper takes anything. Any
-// other helper is unknown. Returns the error, empty when the call holds.
-fn _check_call(source: const u8[:], helper: const u8[:], params: Range, hash: Range, args: const Arg[>..]&, config: const Config&) -> u8[>..] {
+// most includeZero=true or false. Any other helper is a user block helper,
+// which takes anything; whether it is registered is the render's to check,
+// since the block helpers are given to the render (see
+// _unknown_block_error). Returns the error, empty when the call holds.
+fn _check_call(source: const u8[:], helper: const u8[:], params: Range, hash: Range, args: const Arg[>..]&) -> u8[>..] {
     if helper == "with" || helper == "each" {
         guard params.count == 1 else { return str("#", helper, " takes exactly one argument"); }
         guard hash.count == 0 else { return str("#", helper, " takes no hash arguments"); }
@@ -1188,7 +1180,6 @@ fn _check_call(source: const u8[:], helper: const u8[:], params: Range, hash: Ra
         }
         return [];
     }
-    guard _is_user_block(config, helper) else { return str("unknown block helper #", helper); }
     return [];
 }
 
@@ -1290,7 +1281,7 @@ fn _takes_block_params(helper: const u8[:]) -> bool {
 // ends at tag_end ("with person" for {{#with person}}), checks it, and
 // adds its Block node to the innermost open block. Returns the node's
 // index and the run of block parameter names it declares, or an error.
-fn _parse_block(source: const u8[:], tokens: const TagToken[>..<]&, tag_end: i64, nodes: Node[>..]&, roots: i64[>..]&, open: OpenBlock[>..<]&, args: Arg[>..]&, names: Span[>..]&, config: const Config&) -> i64, Range, u8[>..] {
+fn _parse_block(source: const u8[:], tokens: const TagToken[>..<]&, tag_end: i64, nodes: Node[>..]&, roots: i64[>..]&, open: OpenBlock[>..<]&, args: Arg[>..]&, names: Span[>..]&) -> i64, Range, u8[>..] {
     let as_at = _as_index(tokens);
     let call_stop = if as_at == NONE { tokens.len } else { as_at };
     let call_end = if as_at == NONE { tag_end } else { tokens[as_at].start };
@@ -1299,7 +1290,7 @@ fn _parse_block(source: const u8[:], tokens: const TagToken[>..<]&, tag_end: i64
     let helper, params, hash, err = _parse_call(source, tokens, 0, call_stop, call_end, args);
     guard _is_ok(err) else { return NONE, declared, _error_text(err); }
     let name = _span_text(source, helper);
-    let call_err = _check_call(source, name, params, hash, args, config);
+    let call_err = _check_call(source, name, params, hash, args);
     guard call_err.len == 0 else { return NONE, declared, call_err; }
     _bind_arg_paths(source, args, mark, open, names);
     if as_at != NONE {
@@ -1347,7 +1338,7 @@ fn _may_be_helper(source: const u8[:], tokens: const TagToken[>..<]&, param_ref:
 // HTML-escaped. Returns the error text, empty
 // when the parse holds.
 
-fn _parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots: i64[>..]&, args: Arg[>..]&, config: const Config&) -> u8[>..] {
+fn _parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots: i64[>..]&, args: Arg[>..]&) -> u8[>..] {
     let open: OpenBlock[>..<] = [];
     let names: Span[>..] = [];
     // The lexed body of the tag at hand, reused from tag to tag.
@@ -1358,7 +1349,7 @@ fn _parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots:
             Comment => {},
             RawOpen => {
                 _lex_tag(source, token.start, token.end, tag_tokens);
-                let opener, declared, err = _parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names, config);
+                let opener, declared, err = _parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
                 guard err.len == 0 else { return err; }
                 open.push(_open_block(opener, declared));
             },
@@ -1387,7 +1378,7 @@ fn _parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots:
                     inner.in_inverse = true;
                     inner.last = NONE;
                     _lex_tag(source, token.start + 4, token.end, tag_tokens);
-                    let opener, declared, err = _parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names, config);
+                    let opener, declared, err = _parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
                     guard err.len == 0 else { return err; }
                     var chained = _open_block(opener, declared);
                     chained.chained = true;
@@ -1398,7 +1389,7 @@ fn _parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots:
                     open.resize(_chain_start(open));
                 } else if token.tag == TagKind.Open {
                     _lex_tag(source, token.start + 1, token.end, tag_tokens);
-                    let opener, declared, err = _parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names, config);
+                    let opener, declared, err = _parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
                     guard err.len == 0 else { return err; }
                     open.push(_open_block(opener, declared));
                 } else {
@@ -1483,13 +1474,13 @@ fn _failed(error: const u8[:]) -> Engine {
 
 // Tokenizes, parses and validates template, and returns the Engine for it.
 // prefix starts the error text, if any.
-fn _compile(template: const u8[:], prefix: const u8[:], config: const Config&) -> Engine {
+fn _compile(template: const u8[:], prefix: const u8[:]) -> Engine {
     let tokens, err = _tokenize(template);
     guard err.len == 0 else { return _failed(str(prefix, err)); }
     let nodes: Node[>..] = [];
     let roots: i64[>..] = [];
     let args: Arg[>..] = [];
-    let parse_err = _parse(template, tokens, nodes, roots, args, config);
+    let parse_err = _parse(template, tokens, nodes, roots, args);
     guard parse_err.len == 0 else { return _failed(str(prefix, parse_err)); }
 
     // The paths are those of the expressions and those among the
@@ -1515,43 +1506,19 @@ fn _compile(template: const u8[:], prefix: const u8[:], config: const Config&) -
 
 // Compiles template text into an Engine. On a malformed template the Engine
 // carries the error, such as "unexpected /with", and renders nothing. The
-// Engine copies what it needs: template may go away afterwards. A template
-// with this engine opens only the built-in blocks.
+// Engine copies what it needs: template may go away afterwards. The
+// helpers and block helpers are given to the render, not here: an Engine
+// cannot hold a function (spec §7.6).
 fn get_engine(template: const u8[:]) -> Engine {
-    return get_engine(template, _no_block_helpers);
-}
-
-// get_engine with the user's block helpers G: the blocks G registers with
-// block_helper, {{#list items}} say, are the ones a template may open
-// besides the built-in ones.
-//
-// G registers each name once: a name it registers twice is the error
-// duplicate block helper "name".
-fn get_engine<G>(template: const u8[:]) -> Engine {
-    let names: u8[>..] = [];
-    _block_helper_names(names, G);
-    let duplicate = _duplicate_error("block helper", names);
-    guard duplicate.len == 0 else { return _failed(duplicate); }
-    let config = Config { block_helpers: words(names) };
-    return _compile(template, "", config);
+    return _compile(template, "");
 }
 
 // Reads the template file at path and compiles it into an Engine. The
 // error, if any, is "cannot read template <path>" or "<path>: <parse error>".
 fn load_engine(path: const u8[:]) -> Engine {
-    return load_engine(path, _no_block_helpers);
-}
-
-// load_engine with the user's block helpers G, as get_engine.
-fn load_engine<G>(path: const u8[:]) -> Engine {
-    let names: u8[>..] = [];
-    _block_helper_names(names, G);
-    let duplicate = _duplicate_error("block helper", names);
-    guard duplicate.len == 0 else { return _failed(duplicate); }
     let source: u8[>..] = [];
     guard read_file(path, source) else { return _failed(str("cannot read template ", path)); }
-    let config = Config { block_helpers: words(names) };
-    return _compile(source, str(path, ": "), config);
+    return _compile(source, str(path, ": "));
 }
 
 // The field names engine's paths use, as slices of engine.text, for the
@@ -1885,24 +1852,49 @@ fn _duplicate_error(kind: const u8[:], names: const u8[:]) -> u8[>..] {
     return str("duplicate ", kind, " \"", twice, "\"");
 }
 
-// The error for helpers F and block helpers G that register a name twice,
-// empty when each name is registered once: what a render checks first.
-fn _registration_error<F, G>() -> u8[>..] {
+// What a render checks before it writes anything: that helpers F and
+// block helpers G register each name once, and that every block of engine
+// that is not built in has a block helper in G. Returns the error, empty
+// when both hold.
+fn _registration_error<F, G>(engine: const Engine&) -> u8[>..] {
     let names: u8[>..] = [];
     _helper_names(names, F);
     let duplicate = _duplicate_error("helper", names);
     guard duplicate.len == 0 else { return duplicate; }
     let block_names: u8[>..] = [];
     _block_helper_names(block_names, G);
-    return _duplicate_error("block helper", block_names);
+    let block_duplicate = _duplicate_error("block helper", block_names);
+    guard block_duplicate.len == 0 else { return block_duplicate; }
+    return _unknown_block_error(engine, block_names);
+}
+
+// The error for the first block of engine whose helper is neither built in
+// nor among block_names, one per line, such as unknown block helper
+// "nope"; empty when there is none.
+fn _unknown_block_error(engine: const Engine&, block_names: const u8[:]) -> u8[>..] {
+    let known = words(block_names);
+    for node in engine.nodes {
+        guard node.kind == NodeKind.Block else { continue; }
+        let helper = _span_text(engine.text, node.value);
+        guard !_is_built_in_block(helper) && !_is_listed(known, helper) else { continue; }
+        return str("unknown block helper \"", helper, "\"");
+    }
+    return [];
+}
+
+// Whether names holds name.
+fn _is_listed(names: const u8[:][>..]&, name: const u8[:]) -> bool {
+    for listed in names {
+        if listed == name { return true; }
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
 // Block helpers.
 //
 // The user's block helpers are a second static function value, passed
-// after the helpers to a render function, and to get_engine or
-// load_engine. It is called as
+// after the helpers to a render function. It is called as
 //
 //     block_helpers<B>(reg: Registry&)
 //
@@ -1911,9 +1903,8 @@ fn _registration_error<F, G>() -> u8[>..] {
 // block_helper(reg, name) registration runs its block on the call's
 // HelperContext cx when the call is to name, and that answers the call.
 // Each name is registered once, as a helper's. The block writes straight
-// into cx.out,
-// and calls B, the block's body, as often as it likes, each time with the
-// context the body runs on:
+// into cx.out, and calls B, the block's body, as often as it likes, each
+// time with the context the body runs on:
 //
 //     B(this())           the context the block was written in;
 //     B(param(i))         what the param at position i finds: a path or a
@@ -1943,16 +1934,17 @@ fn _registration_error<F, G>() -> u8[>..] {
 //             cx.out.append("</ul>");
 //         };
 //     }
-//     let engine = gooseneck::get_engine(template, blocks);
+//     let engine = gooseneck::get_engine(template);
 //     gooseneck::render_into(engine, context, out, my_helpers, blocks);
 //
-// Given to get_engine or load_engine, the function also gives the names
-// of its block helpers, which a template may open: the engine calls it
-// once on a listing Registry, where each block_helper gives its name
-// instead of running its block. So {{#typo}} is a compile error, as with
-// handlebars.js's knownHelpers, and the names cannot drift from the
-// helpers. A name registered twice is the engine's error, duplicate block
-// helper "name", there, and the render's, as a helper's, otherwise.
+// The function also gives the names of its block helpers: before it
+// writes anything, the render calls it once on a listing Registry, where
+// each block_helper gives its name instead of running its block. A name
+// registered twice is the error duplicate block helper "name", and a block
+// of the template that is neither built in nor registered, {{#typo}} say,
+// the error unknown block helper "typo", as handlebars.js's knownHelpers
+// would find it. The engine cannot check that when it compiles: it never
+// sees the block helpers, since it cannot hold a function (spec §7.6).
 //
 // Its body runs inside the render's recursive walk, so the limits of
 // spec §7.8 hold there: no growable local (a u8[>..] buffer, say) may be in
@@ -2555,7 +2547,7 @@ recursive fn _eval_user_block<F, G>(node: const Node&, rc: RenderContext&) {
 }
 
 // Runs a Block node's helper: a built-in one, or else a user block helper,
-// which _check_call found in the Config.
+// which _unknown_block_error found registered before the render began.
 recursive fn _eval_block<F, G>(node: const Node&, rc: RenderContext&) {
     let helper = _span_text(rc.engine.text, node.value);
     if helper == "with" {
@@ -2642,8 +2634,8 @@ fn render_into<T, F>(engine: const Engine&, context: const T&, out: u8[>..]&) ->
 // Block helpers above.
 fn render_into<T, F, G>(engine: const Engine&, context: const T&, out: u8[>..]&) -> i64, u8[>..] {
     guard engine.error.len == 0 else { return 0, str(engine.error); }
-    let duplicate = _registration_error(F, G);
-    guard duplicate.len == 0 else { return 0, duplicate; }
+    let helpers_err = _registration_error(engine, F, G);
+    guard helpers_err.len == 0 else { return 0, helpers_err; }
     let names: const u8[:][>..] = [];
     _name_slices(engine, names);
     let doc: json::Node[>..] = [];
@@ -2669,8 +2661,8 @@ fn render_json<F>(engine: const Engine&, json_text: const u8[:], out: u8[>..]&) 
 // render_json with helpers F and block helpers G.
 fn render_json<F, G>(engine: const Engine&, json_text: const u8[:], out: u8[>..]&) -> u8[>..] {
     guard engine.error.len == 0 else { return str(engine.error); }
-    let duplicate = _registration_error(F, G);
-    guard duplicate.len == 0 else { return duplicate; }
+    let helpers_err = _registration_error(engine, F, G);
+    guard helpers_err.len == 0 else { return helpers_err; }
     let doc: json::Node[>..] = [];
     let decoded: u8[>..] = [];
     let root, err = json::parse(json_text, doc, decoded);
@@ -2694,8 +2686,8 @@ fn render_json_file<F>(engine: const Engine&, path: const u8[:], out: u8[>..]&) 
 // render_json_file with helpers F and block helpers G.
 fn render_json_file<F, G>(engine: const Engine&, path: const u8[:], out: u8[>..]&) -> u8[>..] {
     guard engine.error.len == 0 else { return str(engine.error); }
-    let duplicate = _registration_error(F, G);
-    guard duplicate.len == 0 else { return duplicate; }
+    let helpers_err = _registration_error(engine, F, G);
+    guard helpers_err.len == 0 else { return helpers_err; }
     let text: u8[>..] = [];
     guard read_file(path, text) else { return str("cannot read JSON ", path); }
     let err = render_json(engine, text, out, F, G);

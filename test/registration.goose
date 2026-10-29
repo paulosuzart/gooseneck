@@ -1,10 +1,9 @@
 // How registrations dispatch: helper(reg, name) and block_helper(reg, name),
 // a block that does not answer leaves a bare name to the field, names match
 // whole, a helper beats a field of its name, a name may be both a helper
-// and a block helper, get_engine and load_engine take the block helper
-// names from the registrations, and a name registered twice is an error:
-// the engine's for block helpers given to get_engine or load_engine, the
-// render's otherwise. Each case asserts, then prints its name;
+// and a block helper, and the render's errors, before it writes anything:
+// a name registered twice, and a block no registration knows. Each case
+// asserts, then prints its name;
 // scripts/test.sh compares that list with test/expected/registration.out.
 import handlebars from "../gooseneck";
 
@@ -124,10 +123,9 @@ fn fail(label: const u8[:], how: const u8[:], err: const u8[:], got: const u8[:]
     assert(false);
 }
 
-// Renders template, compiled with the registered block helpers, with the
-// struct and with the JSON; both must give want.
+// Renders template with the struct and with the JSON; both must give want.
 fn check(label: const u8[:], template: const u8[:], context: const Page&, want: const u8[:]) {
-    let engine = gooseneck::get_engine(template, blocks);
+    let engine = gooseneck::get_engine(template);
     let out, err = gooseneck::render(engine, context, helpers, blocks);
     if err.len > 0 || out != want { fail(label, "struct", err, out, want); }
     let json_out: u8[>..] = [];
@@ -136,19 +134,10 @@ fn check(label: const u8[:], template: const u8[:], context: const Page&, want: 
     print(label);
 }
 
-// Compiles template with the registered block helpers; it must fail with
-// want.
-fn check_rejected(label: const u8[:], template: const u8[:], want: const u8[:]) {
-    let engine = gooseneck::get_engine(template, blocks);
-    if engine.error != want { fail(label, "error", engine.error, "", want); }
-    print(label);
-}
-
-// Renders template with helpers F and block helpers G, one of which
-// registers a name twice, through each render function; each must fail with want and
-// write nothing. The engine is compiled with the registered block helpers.
+// Renders template with helpers F and block helpers G through each render
+// function; each must fail with want and write nothing.
 fn check_render_error<F, G>(label: const u8[:], template: const u8[:], context: const Page&, want: const u8[:]) {
-    let engine = gooseneck::get_engine(template, blocks);
+    let engine = gooseneck::get_engine(template);
     let out, err = gooseneck::render(engine, context, F, G);
     if err != want || out.len > 0 { fail(label, "render", err, out, want); }
     let into: u8[>..] = [];
@@ -189,27 +178,22 @@ fn main() {
           "<b><ul><li><b>pen</b></li><li><b>ink</b></li></ul></b>");
     check("block helper beside built-ins", "{{#each items}}{{#bold}}{{@index}}{{name}}{{/bold}}{{/each}}", context,
           "<b>0pen</b><b>1ink</b>");
-    check_rejected("unknown block helper", "{{#nope}}x{{/nope}}", "unknown block helper #nope");
-    check_rejected("block name must match whole", "{{#bol}}x{{/bol}}", "unknown block helper #bol");
+    check_render_error("unknown block helper", "{{#nope}}x{{/nope}}", context, "unknown block helper \"nope\"", helpers, blocks);
+    check_render_error("block name must match whole", "{{#bol}}x{{/bol}}", context, "unknown block helper \"bol\"", helpers, blocks);
+    check_render_error("unknown block helper inside a block", "{{#bold}}{{#each items}}{{#nope}}x{{/nope}}{{/each}}{{/bold}}", context, "unknown block helper \"nope\"", helpers, blocks);
     check("helper and block helper of one name", "{{bold}}{{#bold}}x{{/bold}}", context, "B<b>x</b>");
 
-    // load_engine takes the names the same way.
-    let engine = gooseneck::load_engine(str(resource_dir(), "fixtures/registered.hbs"), blocks);
+    // A loaded engine renders with block helpers the same way.
+    let engine = gooseneck::load_engine(str(resource_dir(), "fixtures/registered.hbs"));
     let out, err = gooseneck::render(engine, context, helpers, blocks);
     if err.len > 0 || out != "<b>ADA &lt;3</b>\n" { fail("load_engine", "struct", err, out, "<b>ADA &lt;3</b>\n"); }
     print("load_engine");
 
     // A name registered twice.
     check_render_error("duplicate helper", "{{count}}", context, "duplicate helper \"count\"", twice_helpers, blocks);
-    check_render_error("duplicate block helper in a render", "{{name}}", context, "duplicate block helper \"bold\"", helpers, twice_blocks);
-    let twice_engine = gooseneck::get_engine("{{name}}", twice_blocks);
-    if twice_engine.error != "duplicate block helper \"bold\"" { fail("duplicate block helper", "get_engine", twice_engine.error, "", "duplicate block helper \"bold\""); }
-    print("duplicate block helper");
-    let twice_loaded = gooseneck::load_engine(str(resource_dir(), "fixtures/registered.hbs"), twice_blocks);
-    if twice_loaded.error != "duplicate block helper \"bold\"" { fail("duplicate block helper", "load_engine", twice_loaded.error, "", "duplicate block helper \"bold\""); }
-    print("duplicate block helper in load_engine");
+    check_render_error("duplicate block helper", "{{name}}", context, "duplicate block helper \"bold\"", helpers, twice_blocks);
 
-    // Inline, the check is the render's too.
+    // Inline helpers are checked the same way.
     let inline_engine = gooseneck::get_engine("{{now}}");
     let inline_out: u8[>..] = [];
     let nodes, inline_err = gooseneck::render_into(inline_engine, context, inline_out) { reg =>

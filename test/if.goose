@@ -185,7 +185,7 @@ fn main() {
     check_rejected("else if after else", "{{#if no}}A{{else}}B{{else if yes}}C{{/if}}", context, "unexpected else");
     check_rejected("else if unclosed", "{{#if no}}A{{else if yes}}B", context, "unclosed #if");
     check_rejected("else if without param", "{{#if no}}A{{else if}}B{{/if}}", context, "#if takes exactly one argument");
-    check_rejected("else unknown helper", "{{#if no}}A{{else repeat yes}}B{{/if}}", context, "unknown block helper #repeat");
+    check_rejected("else unknown helper", "{{#if no}}A{{else repeat yes}}B{{/if}}", context, "unknown block helper \"repeat\"");
     check_rejected("two else after else if", "{{#if no}}A{{else if yes}}B{{else}}C{{else}}D{{/if}}", context, "unexpected else");
     check_rejected("mismatched close", "{{#if yes}}x{{/with}}", context, "unexpected /with");
     check_rejected("mismatched close with", "{{#with obj}}x{{/if}}", context, "unexpected /if");
@@ -196,7 +196,7 @@ fn main() {
     check_rejected("includeZero not bool", "{{#if yes includeZero=1}}x{{/if}}", context, "#if: includeZero must be true or false");
     check_rejected("with two params", "{{#with obj yes}}x{{/with}}", context, "#with takes exactly one argument");
     check_rejected("with hash", "{{#with obj as=1}}x{{/with}}", context, "#with takes no hash arguments");
-    check_rejected("unknown helper", "{{#repeat yes}}x{{/repeat}}", context, "unknown block helper #repeat");
+    check_rejected("unknown helper", "{{#repeat yes}}x{{/repeat}}", context, "unknown block helper \"repeat\"");
     check_rejected("unless without param", "{{#unless}}x{{/unless}}", context, "#unless takes exactly one argument");
     check_rejected("unless unknown hash key", "{{#unless yes foo=true}}x{{/unless}}", context, "#unless: unknown hash argument foo");
     check_rejected("unless includeZero not bool", "{{#unless yes includeZero=1}}x{{/unless}}", context, "#unless: includeZero must be true or false");

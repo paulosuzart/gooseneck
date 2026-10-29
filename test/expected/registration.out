@@ -18,10 +18,9 @@ nested block helpers
 block helper beside built-ins
 unknown block helper
 block name must match whole
+unknown block helper inside a block
 helper and block helper of one name
 load_engine
 duplicate helper
-duplicate block helper in a render
 duplicate block helper
-duplicate block helper in load_engine
 duplicate inline helper

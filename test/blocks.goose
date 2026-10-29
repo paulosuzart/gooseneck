@@ -1,7 +1,7 @@
 // User block helpers: a body on the block's context, twice, on a param,
 // on each item of a custom iterator (with @index, @key, @first, @last and
 // block parameters), forwards and backwards, the inverse, hash arguments,
-// escaping, nesting, else chains, raw blocks, and the compile errors. The block
+// escaping, nesting, else chains, raw blocks, and the errors. The block
 // helpers below mirror the handlebars.js ones in the comment of each; every
 // expected output is what handlebars.js 4.7.10 renders for the same
 // template and data, except the errors, which are gooseneck's messages.
@@ -135,7 +135,7 @@ fn fail(label: const u8[:], how: const u8[:], err: const u8[:], got: const u8[:]
 
 // Renders template with the struct, the JSON, or both; each must give want.
 fn check(label: const u8[:], template: const u8[:], context: const Shop&, use_struct: bool, use_json: bool, want: const u8[:]) {
-    let engine = gooseneck::get_engine(template, blocks);
+    let engine = gooseneck::get_engine(template);
     if use_struct {
         let out, err = gooseneck::render(engine, context, helpers, blocks);
         if err.len > 0 || out != want { fail(label, "struct", err, out, want); }
@@ -148,10 +148,9 @@ fn check(label: const u8[:], template: const u8[:], context: const Shop&, use_st
     print(label);
 }
 
-// Compiles template with the block helpers, or without them, and renders
-// it; the render must fail with want.
-fn check_rejected(label: const u8[:], template: const u8[:], with_blocks: bool, context: const Shop&, want: const u8[:]) {
-    let engine = if with_blocks { gooseneck::get_engine(template, blocks) } else { gooseneck::get_engine(template) };
+// Renders template with the block helpers; the render must fail with want.
+fn check_rejected(label: const u8[:], template: const u8[:], context: const Shop&, want: const u8[:]) {
+    let engine = gooseneck::get_engine(template);
     let out, err = gooseneck::render(engine, context, helpers, blocks);
     if err != want || out.len != 0 { fail(label, "error", err, out, want); }
     print(label);
@@ -213,13 +212,16 @@ fn main() {
     check("raw if", "{{{{if title}}}}{{x}}{{{{/if}}}}", context, true, true, "{{x}}");
     check("raw else", "{{{{raw}}}}{{x}}{{else}}y{{{{/raw}}}}", context, true, true, "{{x}}{{else}}y");
     check("raw braces", "{{{{raw}}}}}}}}{{{{/raw}}}}", context, true, true, "}}}}");
-    check_rejected("unclosed raw block", "{{{{raw}}}}x", true, context, "unclosed #raw");
-    check_rejected("raw block closed by another", "{{{{raw}}}}x{{{{/bold}}}}", true, context, "unexpected /bold");
-    check_rejected("unknown raw block", "{{{{nope}}}}x{{{{/nope}}}}", true, context, "unknown block helper #nope");
-    check_rejected("unclosed raw tag", "{{{{raw}}x", true, context, "unclosed tag");
+    check_rejected("unclosed raw block", "{{{{raw}}}}x", context, "unclosed #raw");
+    check_rejected("raw block closed by another", "{{{{raw}}}}x{{{{/bold}}}}", context, "unexpected /bold");
+    check_rejected("unknown raw block", "{{{{nope}}}}x{{{{/nope}}}}", context, "unknown block helper \"nope\"");
+    check_rejected("unclosed raw tag", "{{{{raw}}x", context, "unclosed tag");
 
-    check_rejected("unknown block helper", "{{#nope}}x{{/nope}}", true, context, "unknown block helper #nope");
-    check_rejected("unclosed block helper", "{{#bold}}x", true, context, "unclosed #bold");
-    check_rejected("compiled without the block helpers", "{{#bold}}x{{/bold}}", false, context, "unknown block helper #bold");
-    check_rejected("params on if still rejected", "{{#if flag as |f|}}x{{/if}}", true, context, "#if takes no block parameters");
+    check_rejected("unknown block helper", "{{#nope}}x{{/nope}}", context, "unknown block helper \"nope\"");
+    check_rejected("unclosed block helper", "{{#bold}}x", context, "unclosed #bold");
+    let bold = gooseneck::get_engine("{{#bold}}x{{/bold}}");
+    let bare, bare_err = gooseneck::render(bold, context, helpers);
+    if bare_err != "unknown block helper \"bold\"" || bare.len != 0 { fail("rendered without the block helpers", "error", bare_err, bare, "unknown block helper \"bold\""); }
+    print("rendered without the block helpers");
+    check_rejected("params on if still rejected", "{{#if flag as |f|}}x{{/if}}", context, "#if takes no block parameters");
 }
