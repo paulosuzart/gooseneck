@@ -461,7 +461,7 @@ and which parameter. Rendering reads it straight off the stack.
 ## Layout
 
 ```
-gooseneck/handlebars.goose   the engine: tokenizer, parser, conversion, renderer
+gooseneck/handlebars.goose   the engine: tokenizer, tag lexer, parser, conversion, renderer
 main.goose                   CLI: template + JSON file -> stdout
 examples/http/               the engine inside an HTTP service
 test/                        test suites, fixtures and expected outputs
