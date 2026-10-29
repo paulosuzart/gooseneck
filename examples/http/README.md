@@ -22,11 +22,17 @@ renders.
   - `{{now}}` writes the time of the render in Unix seconds.
 
 ```goose
-gooseneck::render_into(page, context, out) { cx => {
-    gooseneck::helper(cx, "ordinal") { gooseneck::answer(cx, helpers::ordinal(cx)); };
-    gooseneck::helper(cx, "now") { gooseneck::answer(cx, helpers::now()); };
-}};
+let nodes, err = gooseneck::render_into(page, context, out) { reg =>
+    gooseneck::helper(reg, "ordinal") { cx => gooseneck::answer(cx, helpers::ordinal(cx)); };
+    gooseneck::helper(reg, "now") { cx => gooseneck::answer(cx, helpers::now()); };
+};
 ```
+
+`reg` is where the helpers register, and `cx` is the call a helper
+answers. Registering a name twice makes the render fail with
+`duplicate helper "now"`; the example then logs
+`cannot render: duplicate helper "now"` and answers 500
+`{"error":"render_failed"}`.
 
 The helpers' code is in `helpers.goose`, and the routes and the server are
 in `main.goose`.

@@ -63,9 +63,9 @@ text may go away.
 ### Rendering
 
 ```goose
-// Typed context: append to a buffer you own (returns how many document nodes the context took).
+// Typed context: append to a buffer you own (returns how many document nodes the context took, and the error).
 let out: u8[>..] = [];
-gooseneck::render_into(engine, shelf, out);
+let nodes, err = gooseneck::render_into(engine, shelf, out);
 
 // Typed context: get a fresh buffer and the error back.
 let text, err = gooseneck::render(engine, shelf);
@@ -104,27 +104,33 @@ fn older(cx: gooseneck::HelperContext&) -> json::Value {
 }
 
 let page = gooseneck::get_engine("{{#each books}}{{shout title}}{{#if (older year)}} (classic){{/if}}; {{/each}}");
-gooseneck::render_into(page, shelf, out) { cx =>
-    gooseneck::helper(cx, "shout") { gooseneck::answer(cx, shout(cx)); };
-    gooseneck::helper(cx, "older") { gooseneck::answer(cx, older(cx)); };
+gooseneck::render_into(page, shelf, out) { reg =>
+    gooseneck::helper(reg, "shout") { cx => gooseneck::answer(cx, shout(cx)); };
+    gooseneck::helper(reg, "older") { cx => gooseneck::answer(cx, older(cx)); };
 };   // FRANKENSTEIN (classic); DUNE;
 ```
 
-`cx` is the call being rendered, a `gooseneck::HelperContext`.
-`helper(cx, "shout") { ... }` runs its block when the template calls
+`reg` is what the helpers register on, a `gooseneck::Registry`, and `cx`
+is the call being rendered, a `gooseneck::HelperContext`.
+`helper(reg, "shout") { cx => ... }` runs its block when the template calls
 `shout`, and the block answers with `answer(cx, value)`. Nothing is
 returned: like a plod handler, the helper fills in the context it was
-given. The first registration that answers wins. A block that doesn't
-answer leaves the call to the registrations after it, and a call nobody
-answers renders nothing.
+given. A call nobody answers renders nothing.
+
+Each name is registered once. A name registered twice is an error, not a
+silent "first one wins": before it renders anything, each render runs your
+registrations once to list their names, and a duplicate makes the render
+return `duplicate helper "shout"` and write nothing. Helpers given inline
+are only seen by the render, so that is where the check runs, on every
+render (one extra call of your function), and the first render shows it.
 
 The block can keep state in your locals:
 
 ```goose
 let counted = gooseneck::get_engine("{{owner}}{{#each books}} {{next}}{{/each}}");
 var calls: i64 = 0;
-gooseneck::render_into(counted, shelf, out) { cx =>
-    gooseneck::helper(cx, "next") {
+gooseneck::render_into(counted, shelf, out) { reg =>
+    gooseneck::helper(reg, "next") { cx =>
         calls += 1;
         gooseneck::answer(cx, json::Value.Int { v: calls });
     };
@@ -135,17 +141,17 @@ To share the same helpers between several render calls, put the
 registrations in a named function and pass it instead of the block:
 
 ```goose
-fn book_helpers(cx) {
-    gooseneck::helper(cx, "shout") { gooseneck::answer(cx, shout(cx)); };
-    gooseneck::helper(cx, "older") { gooseneck::answer(cx, older(cx)); };
+fn book_helpers(reg) {
+    gooseneck::helper(reg, "shout") { cx => gooseneck::answer(cx, shout(cx)); };
+    gooseneck::helper(reg, "older") { cx => gooseneck::answer(cx, older(cx)); };
 }
 
 gooseneck::render_into(page, shelf, out, book_helpers);
 ```
 
-Leave its `cx` untyped, as in a plod handler (`fn handle(cx)`). The
-renderer passes the context with `&` so that a block gets it by reference,
-not a copy, and a function that types it as `gooseneck::HelperContext&`
+Leave its `reg` untyped, as in a plod handler (`fn handle(cx)`). The
+renderer passes the registry with `&` so that a block gets it by reference,
+not a copy, and a function that types it as `gooseneck::Registry&`
 would turn that `&` into a "redundant &" compiler warning. Functions that
 only take the context from a registration, like `shout`, can type it.
 
@@ -178,7 +184,7 @@ more examples.
 ### Block helpers
 
 Block helpers are a second function, passed after the helpers. It takes
-the same context and registers each helper with `block_helper`. It has to
+the same registry and registers each helper with `block_helper`. It has to
 be a named function: it's generic over its body `B`, which a block can't
 be. A render call takes one trailing block, the last argument, so with
 block helpers the expression helpers are a named function too. Give the
@@ -188,13 +194,13 @@ the registered names from it, like handlebars.js's `knownHelpers`. So
 the list can't drift from the helpers:
 
 ```goose
-fn blocks<B>(cx) {
-    gooseneck::block_helper(cx, "bold") {
+fn blocks<B>(reg) {
+    gooseneck::block_helper(reg, "bold") { cx =>
         cx.out.append("<b>");
         B(gooseneck::this());               // the body, on the block's context
         cx.out.append("</b>");
     };
-    gooseneck::block_helper(cx, "list") {
+    gooseneck::block_helper(reg, "list") { cx =>
         cx.out.append("<ul>");
         for k in gooseneck::length(gooseneck::param(cx, 0)) {
             cx.out.append("<li>");
@@ -211,9 +217,15 @@ gooseneck::render_into(engine, shelf, out, book_helpers, blocks);
 ```
 
 The matching registration's block runs, and that answers the call. To get
-the names, `get_engine` calls the function once with `cx.listing` set.
+the names, `get_engine` calls the function once on a listing registry.
 Each `block_helper` then adds its name and skips its block, so nothing is
 written and no body runs.
+
+Each block helper name is registered once, too. Given to `get_engine` or
+`load_engine`, a name registered twice fails there, at compile time, with
+`duplicate block helper "bold"`; a render checks it again, as it does for
+helpers. A name may be both a helper and a block helper: `{{bold}}` and
+`{{#bold}}...{{/bold}}` can't be confused.
 
 The helper writes straight into `cx.out`, the render's own buffer, and calls
 `B`, its body, as often as it likes. What it passes says which context the
@@ -353,6 +365,9 @@ it and the latest results.
   `[object Object]` or a comma-joined list).
 - A call no registered helper answers renders nothing and is falsy
   (handlebars.js throws `Missing helper`).
+- A helper registered twice is only found when a render runs (block
+  helpers given to `get_engine` are found there): Goose can't check it
+  while compiling your code.
 - Iterating a *typed struct* as an object, or looking up one of its fields
   with a dynamic key (`{{lookup person field}}`), only sees the fields the
   template names elsewhere: in a path, or as a literal lookup key such as
@@ -365,8 +380,9 @@ it and the latest results.
 
 Goose has no runtime function pointers: a function value is a compile-time
 argument, and it can't be stored, returned or put in data (spec §7.6). So
-gooseneck has no helper registry. You pass one function, and the renderer
-calls it directly. That makes each helper call a direct, inlinable call,
+gooseneck keeps no table of helpers: the `Registry` your function receives
+holds the current call, not your helpers. You pass one function, and the
+renderer calls it directly. That makes each helper call a direct, inlinable call,
 specialized for your function, with nothing to register or look up at
 runtime. A block can capture your locals, so per-render state needs no
 extra API. Renders without helpers use a built-in function that answers
@@ -377,15 +393,17 @@ give it the shape of plod's routes: one registration per helper, built from
 trailing blocks that are inlined into your function. It still compiles to a
 chain of name comparisons and direct calls.
 
-The function takes one `HelperContext` and fills it in, the way a plod
-handler takes `cx` and answers through it. It doesn't return a result, for
-three reasons:
+The function takes a `Registry`, and each registration's block takes the
+call's `HelperContext` and fills it in, the way a plod handler takes `cx`
+and answers through it. The registry is the outer part, which guarantees
+each name is registered once; the context is the call. Splitting them
+keeps listing (for the duplicate check and the block names) out of the
+call. It doesn't return a result, for three reasons:
 
 - **No `return` in your code.** A `return` in a trailing block returns from
   the function the block is written in (§7.6). A returned result would make
   every registration end in `return ...`, and a forgotten one would fall
-  through. With `answer(cx, value)` the context records the answer, and
-  later registrations see it and skip.
+  through. With `answer(cx, value)` the context records the answer.
 - **One place for the call.** The name, the arguments, the scratch text,
   the output and the answer all live in the context. The function has no
   separate `name` and `args` parameters that repeat what the context holds.
@@ -393,15 +411,25 @@ three reasons:
   recursive walk, where references may only be passed down, never stored
   in a struct built there (§7.8). A per-call struct holding the name, or
   the name passed as a block parameter, is rejected there. So the
-  renderer builds the context once, outside the walk, fills in each call's
-  name and arguments, and passes it down by reference. A block helper gets
-  a copy, because its body makes calls of its own.
+  renderer builds the registry, with its context, once, outside the walk,
+  fills in each call's name and arguments, and passes it down by
+  reference. A block helper gets a copy, because its body makes calls of
+  its own.
 
-Your function's `cx` is untyped, as in plod. The renderer passes the
-context with `&` so that a block given as helpers gets it by reference
-(a block's parameter is otherwise a copy, and its answer would be lost).
-Against a parameter typed `HelperContext&`, that `&` is a "redundant &"
+Your function's `reg` is untyped, as in plod. The renderer passes the
+registry with `&` so that a block given as helpers gets it by reference,
+and each registration passes the context to its block the same way (a
+block's parameter is otherwise a copy, and its answer would be lost).
+Against a parameter typed `Registry&`, that `&` is a "redundant &"
 compiler warning (§4.1). Against an untyped one it isn't.
+
+Duplicate names can't be found while Goose compiles your code: your
+function is just code, and only running it says which names it
+registers. So each render runs it once on a listing registry first, where
+every registration gives its name instead of running its block, and a
+name given twice is the render's error. `get_engine` and `load_engine` do
+the same for the block helpers they're given, so a duplicate block helper
+fails at compile time there.
 
 Block helpers are a separate function for the same reason, plus one more:
 a block helper gets its body, `B`, as a static function value too. The
