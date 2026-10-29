@@ -1259,6 +1259,15 @@ fn get_engine(template: const u8[:], config: const Config&) -> Engine {
     return _compile(template, "", config);
 }
 
+// get_engine with the block helpers that G registers with block_helper (see
+// block_helpers): their names are the Config's.
+fn get_engine<G>(template: const u8[:]) -> Engine {
+    let names: u8[>..] = [];
+    _registered_blocks(names, G);
+    let config = Config { block_helpers: words(names) };
+    return _compile(template, "", config);
+}
+
 // Reads the template file at path and compiles it into an Engine. The
 // error, if any, is "cannot read template <path>" or "<path>: <parse error>".
 fn load_engine(path: const u8[:]) -> Engine {
@@ -1271,6 +1280,14 @@ fn load_engine(path: const u8[:], config: const Config&) -> Engine {
     let source: u8[>..] = [];
     guard read_file(path, source) else { return _failed(str("cannot read template ", path)); }
     return _compile(source, str(path, ": "), config);
+}
+
+// load_engine with the block helpers that G registers, as get_engine.
+fn load_engine<G>(path: const u8[:]) -> Engine {
+    let names: u8[>..] = [];
+    _registered_blocks(names, G);
+    let config = Config { block_helpers: words(names) };
+    return load_engine(path, config);
 }
 
 // The field names engine's paths use, as slices of engine.text, for the
@@ -1496,11 +1513,16 @@ struct Resolved { key: const u8[:], value: json::Value }
 // count), a literal to its value, a subexpression to its helper's result.
 // Read them with param, param_count and hash_arg. params and hash are runs
 // of resolved, a stack that each call pushes onto and pops when done.
+// name is the helper the template calls, which helper and block_helper
+// match. listing is set only while an engine asks the block helpers for
+// their names (see _registered_blocks), never in a render.
 struct Args {
     resolved: const Resolved[>..<]&,
     params: Range,
     hash: Range,
     text: u8[>..]&,
+    name: const u8[:] = "",
+    listing: bool = false,
 }
 
 // The resolved argument at position i of range.
@@ -1532,6 +1554,43 @@ fn hash_arg(args: const Args&, key: const u8[:]) -> json::Value {
 // Knows no helper: what the render functions without helpers use.
 fn _no_helpers(name: const u8[:], args: const Args&) -> Result {
     return unknown();
+}
+
+// ---------------------------------------------------------------------------
+// Registering helpers.
+//
+// helpers and helper write a helpers function as plod::routes and
+// plod::get write a request handler: one registration per helper, a name
+// and a block, instead of a chain of ifs on name.
+//
+//     fn my_helpers(name: const u8[:], args: const gooseneck::Args&) -> gooseneck::Result {
+//         return gooseneck::helpers(args) { call =>
+//             gooseneck::helper(call, "loud") { return gooseneck::known(loud(args)); };
+//             gooseneck::helper(call, "count") {
+//                 return gooseneck::known(json::Value.Int { v: gooseneck::param_count(args) });
+//             };
+//         };
+//     }
+//
+// The function keeps the signature a render takes, so it is passed as
+// before. call is the call being dispatched, args itself. A return in a
+// block returns from the function the block is written in (spec §7.6),
+// my_helpers here, so the first registration whose name matches answers
+// the call and the ones after it never run. A block that ends without
+// returning leaves the call to the registrations after it; when none
+// answers, helpers returns unknown(). The blocks read args from the
+// function around them, so a result may view args.text.
+
+// Runs F, the registrations, on call; unknown() when none of them returned.
+inline fn helpers<F>(call: const Args&) -> Result {
+    F(&call);
+    return unknown();
+}
+
+// Registers the helper name: runs F, which returns the helper's result from
+// the helpers function, when call is to name.
+inline fn helper<F>(call: const Args&, name: const u8[:]) {
+    if call.name == name { F(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -1639,6 +1698,64 @@ fn append_escaped(out: u8[>..]&, text: const u8[:]) {
 // The block helpers of the render functions that take none.
 fn _no_block_helpers<B>(name: const u8[:], args: const Args&, out: u8[>..]&) -> bool {
     return false;
+}
+
+// block_helpers and block_helper register block helpers as helpers and
+// helper register helpers:
+//
+//     fn blocks<B>(name: const u8[:], args: const gooseneck::Args&, out: u8[>..]&) -> bool {
+//         return gooseneck::block_helpers(args) { call =>
+//             gooseneck::block_helper(call, "bold") {
+//                 out.append("<b>");
+//                 B(gooseneck::this());
+//                 out.append("</b>");
+//             };
+//         };
+//     }
+//     let engine = gooseneck::get_engine(template, blocks);
+//     gooseneck::render_into(engine, context, out, my_helpers, blocks);
+//
+// The block of the registration whose name matches runs, and that answers
+// the call: it needs no return. Given to get_engine or load_engine, the
+// same function gives the names a Config would list, so they cannot drift
+// apart: the engine calls it once with args.listing set, where each
+// block_helper adds its name instead of running.
+//
+// call is args, by reference: a block's parameter inside the render's
+// recursion may not be a slice or a struct holding one (spec §7.8), so the
+// name travels in args.
+
+// Runs F, the registrations, on call; false when none of them has its
+// name.
+inline fn block_helpers<F>(call: const Args&) -> bool {
+    F(&call);
+    return false;
+}
+
+// Registers the block helper name: when call is to name, runs F, which
+// writes the block and calls B, and answers the call. While listing, it
+// appends name to call.text, one per line, instead.
+inline fn block_helper<F>(call: const Args&, name: const u8[:]) {
+    if call.listing {
+        call.text.append(name);
+        call.text.push('\n');
+        return;
+    }
+    guard call.name == name else { return; }
+    F();
+    return true from block_helpers;
+}
+
+// Appends the names of the block helpers that G registers with
+// block_helper to names, one per line: G runs once with args.listing set,
+// and with a B that walks nothing.
+fn _registered_blocks<G>(names: u8[>..]&) {
+    fn no_body(part: Body) -> bool { return false; }
+    let resolved: Resolved[>..<] = [];
+    let none = Range { first: 0, count: 0 };
+    let args = Args { resolved: resolved, params: none, hash: none, text: names, listing: true };
+    let out: u8[>..] = [];
+    G("", args, out, no_body);
 }
 
 // ---------------------------------------------------------------------------
@@ -1873,7 +1990,8 @@ recursive fn _call_helper<F>(name: Span, params: Range, hash: Range, rc: RenderC
     _push_resolved(hash, rc, F);
     rc.args.params = Range { first: mark, count: params.count };
     rc.args.hash = Range { first: mark + params.count, count: hash.count };
-    let result = F(_span_text(rc.engine.text, name), rc.args);
+    rc.args.name = _span_text(rc.engine.text, name);
+    let result = F(rc.args.name, rc.args);
     rc.resolved.resize(mark);
     guard result.known else { return json::Value.Null; }
     return result.value;
@@ -1887,7 +2005,8 @@ fn _bare_helper<F>(name: Span, rc: RenderContext&) -> Result {
     let none = Range { first: rc.resolved.len, count: 0 };
     rc.args.params = none;
     rc.args.hash = none;
-    return F(_span_text(rc.engine.text, name), rc.args);
+    rc.args.name = _span_text(rc.engine.text, name);
+    return F(rc.args.name, rc.args);
 }
 
 // Whether a call is to the built-in lookup.
@@ -2148,7 +2267,8 @@ recursive fn _eval_user_block<F, G>(node: const Node&, rc: RenderContext&) {
     var args = rc.args;
     args.params = Range { first: mark, count: node.params.count };
     args.hash = Range { first: mark + node.params.count, count: node.hash.count };
-    G(_span_text(rc.engine.text, node.value), args, rc.out, body);
+    args.name = _span_text(rc.engine.text, node.value);
+    G(args.name, args, rc.out, body);
     rc.resolved.resize(mark);
 }
 
