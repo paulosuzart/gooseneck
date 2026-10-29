@@ -361,6 +361,17 @@ fn _strip_navigation(path: const u8[:]) -> const u8[:] {
 // The data variables {{#each}} sets, written @index, @key, @first, @last.
 const DATA_NAMES = ["index", "key", "first", "last"];
 
+// Splits a path that starts at the context the render began with, @root
+// or @root.name..., into true and the path after "@root.": "" for @root,
+// "a.b" for @root.a.b. Any other path: false and "".
+fn _root_parts(path: const u8[:]) -> bool, const u8[:] {
+    guard starts_with(path, "@root") else { return false, ""; }
+    let rest = path[5..];
+    if rest.len == 0 { return true, rest; }
+    guard starts_with(rest, ".") else { return false, ""; }
+    return true, rest[1..];
+}
+
 // Splits a data path, @ then any number of ../ then a name, into how many
 // enclosing each blocks it climbs and the name: @../index is 1 and
 // "index". Not a data path: -1 and "".
@@ -557,7 +568,7 @@ fn _lex_tag(source: const u8[:], start: i64, stop: i64, tokens: TagToken[>..<]&)
 
 const INVALID_SEGMENT = "Invalid characted in segment";
 const KEYWORD_IN_PATH = "true, false, null, or undefined allowed only at the beginning of the path";
-const UNKNOWN_DATA = "Unknown data variable: only @index, @key, @first and @last, after any ../";
+const UNKNOWN_DATA = "Unknown data variable: only @root, and @index, @key, @first and @last after any ../";
 
 // Whether a token can be one segment of a path: a name, or a word the lexer
 // read as a literal (a path may start with true: true.name).
@@ -593,15 +604,28 @@ fn _skip_navigation(source: const u8[:], tokens: const TagToken[>..<]&, from: i6
 }
 
 // What is wrong with the path tokens[from..to], or "" when nothing is: it
-// must be a data variable (@, any ../, a data name), or navigation then
-// name segments joined by '.'. A literal word is a segment only first.
+// must be a data variable (@, any ../, a data name), @root and name
+// segments after it, or navigation then name segments joined by '.'. A
+// literal word is a segment only first.
 fn _path_error(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> const u8[:] {
     guard to > from else { return "Has 0 length"; }
     if tokens[from].kind == TagTokenKind.Data {
-        guard _is_data_path(source[tokens[from].start..tokens[to - 1].end]) else { return UNKNOWN_DATA; }
-        return "";
+        let text = source[tokens[from].start..tokens[to - 1].end];
+        if _is_data_path(text) { return ""; }
+        let rooted, rest = _root_parts(text);
+        guard rooted else { return UNKNOWN_DATA; }
+        // @ and root, then '.' and the segments.
+        guard to > from + 2 else { return ""; }
+        guard to > from + 3 else { return INVALID_SEGMENT; }
+        return _segments_error(source, tokens, from + 3, to);
     }
-    let body = _skip_navigation(source, tokens, from, to);
+    return _segments_error(source, tokens, _skip_navigation(source, tokens, from, to), to);
+}
+
+// What is wrong with name segments joined by '.', tokens[body..to], or ""
+// when nothing is: a literal word is a segment only first, and the path
+// neither ends in a '.' nor has two in a row.
+fn _segments_error(source: const u8[:], tokens: const TagToken[>..<]&, body: i64, to: i64) -> const u8[:] {
     var i = body;
     while i < to {
         let later = i > body;
@@ -1436,11 +1460,12 @@ fn _has_name(names: const Span[:], text: const u8[:], name: const u8[:]) -> bool
 }
 
 // Adds the field names of the path at span: its dotted segments after the
-// leading ../ and ./ navigation.
+// leading ../ and ./ navigation, or after @root.
 fn _add_path_names(names: Span[>..]&, text: const u8[:], span: Span) {
     let path = text[span.start..span.start + span.len];
     guard !_is_data_path(path) else { return; }
-    let body = _strip_navigation(path);
+    let rooted, after_root = _root_parts(path);
+    let body = if rooted { after_root } else { _strip_navigation(path) };
     var at = span.start + path.len - body.len;
     let end = span.start + span.len;
     while at < end {
@@ -2065,12 +2090,17 @@ struct RenderContext {
 //
 // A path that starts with a block parameter starts from that parameter's
 // node instead: the item or the target of the block that declares it. A
-// parameter that is no node, an each's @key, finds nothing.
+// parameter that is no node, an each's @key, finds nothing. @root starts
+// from the first frame, the context the render began with.
 fn _lookup(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> const json::Node? {
     guard !_is_data_path(path) else { return null; }
     var rest = path;
     var frame = rc.stack.len - 1;
-    if param_ref.up != NONE {
+    let rooted, after_root = _root_parts(path);
+    if rooted {
+        frame = 0;
+        rest = after_root;
+    } else if param_ref.up != NONE {
         guard param_ref.slot == 0 else { return null; }
         frame = rc.params[rc.params.len - 1 - param_ref.up].frame;
         rest = _after_first_segment(path);

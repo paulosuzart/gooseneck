@@ -70,7 +70,19 @@ dotted param name
 unclosed params
 params without as
 params on if
+root at the top
+root in each
+root in with
+with root
+each on a root path
+root in nested each
+root as lookup target
+root field named only there
+root with data key
+root in if
+root path finds nothing
 struct object members
+root alone
 unclosed each
 unclosed inner
 stray close
@@ -82,3 +94,5 @@ else at top
 second else
 else if
 unknown data variable
+root after ../
+root path ends in a dot

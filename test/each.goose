@@ -1,6 +1,6 @@
 // {{#each}}: arrays of scalars and of objects, objects, nested each, each
 // inside with and if, this and ., ../, the data variables @index, @key,
-// @first and @last, empty and missing values, {{else}} on each, with and
+// @first and @last, @root, empty and missing values, {{else}} on each, with and
 // if, whitespace control, and the compile errors of blocks. Every expected
 // output below is what handlebars.js 4.7.10 renders for the same template
 // and data, except the cases under "gooseneck's own". Object iteration and
@@ -178,9 +178,25 @@ fn main() {
     check_rejected("params without as", "{{#each tags |tag|}}x{{/each}}", context, "Invalid characted in segment");
     check_rejected("params on if", "{{#if title as |t|}}{{t}}{{/if}}", context, "#if takes no block parameters");
 
+    // @root: the context the render began with, from anywhere. On the
+    // struct, a field only @root names (owner.last) is still converted.
+    check("root at the top", "{{@root.title}}", context, true, true, "Shop");
+    check("root in each", "{{#each tags}}{{@root.title}}{{/each}}", context, true, true, "ShopShop");
+    check("root in with", "{{#with owner}}{{@root.title}}{{/with}}", context, true, true, "Shop");
+    check("with root", "{{#with @root}}{{title}}{{/with}}", context, true, true, "Shop");
+    check("each on a root path", "{{#with owner}}{{#each @root.tags}}{{this}}{{/each}}{{/with}}", context, true, true, "newsale");
+    check("root in nested each", "{{#each groups}}{{#each items}}{{@root.owner.first}}{{name}} {{/each}}{{/each}}", context, true, true, "Adax Aday Adaz ");
+    check("root as lookup target", "{{#each groups}}{{lookup @root.owner \"first\"}}{{/each}}", context, true, true, "AdaAda");
+    check("root field named only there", "{{#each tags}}{{@root.owner.last}}{{/each}}", context, true, true, "LovelaceLovelace");
+    check("root with data key", "{{#each prices}}{{@key}}={{lookup @root.prices @key}} {{/each}}", context, false, true, "pen=2 ink=0.5 ");
+    check("root in if", "{{#if @root.title}}y{{/if}}", context, true, true, "y");
+    check("root path finds nothing", "[{{@root.nope}}]", context, false, true, "[]");
+
     // gooseneck's own: the struct converts only the fields the template
     // names, and this one names none of owner's.
     check("struct object members", "[{{#each owner}}{{@key}}={{this}};{{/each}}]", context, true, false, "[]");
+    // An object writes nothing (handlebars.js writes [object Object]).
+    check("root alone", "[{{@root}}]", context, true, true, "[]");
 
     check_rejected("unclosed each", "{{#each tags}}x", context, "unclosed #each");
     check_rejected("unclosed inner", "{{#each tags}}{{#if this}}x{{/each}}", context, "unexpected /each");
@@ -192,5 +208,7 @@ fn main() {
     check_rejected("else at top", "a{{else}}b", context, "unexpected else");
     check_rejected("second else", "{{#if tags}}x{{else}}y{{else}}z{{/if}}", context, "unexpected else");
     check("else if", "{{#if empty}}x{{else if items}}y{{/if}}", context, true, true, "y");
-    check_rejected("unknown data variable", "{{#each tags}}{{@root}}{{/each}}", context, "Unknown data variable: only @index, @key, @first and @last, after any ../");
+    check_rejected("unknown data variable", "{{#each tags}}{{@level}}{{/each}}", context, "Unknown data variable: only @root, and @index, @key, @first and @last after any ../");
+    check_rejected("root after ../", "{{#each tags}}{{@../root.title}}{{/each}}", context, "Unknown data variable: only @root, and @index, @key, @first and @last after any ../");
+    check_rejected("root path ends in a dot", "{{@root.}}", context, "Invalid characted in segment");
 }

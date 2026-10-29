@@ -312,8 +312,13 @@ it and the latest results.
 - **`{{#with path}}`** to step into an object.
 - **`{{#if value}}`** with handlebars.js truthiness and `includeZero=true`,
   and its inverse **`{{#unless value}}`**.
-- **`{{#each path}}`** over arrays and objects, with `@index`, `@key`,
-  `@first` and `@last`, and `@../index` (and so on) for an enclosing each.
+- **`{{#each path}}`** over arrays and objects.
+- **Data variables**: `@index`, `@key`, `@first` and `@last` of the
+  innermost `#each` (or of a user block helper's item), `@../index` (and so
+  on) for an enclosing each, and `@root`, the context the render began
+  with: `{{@root.title}}` from any depth, `{{#with @root}}`,
+  `{{#each @root.items}}`, or as a helper or `lookup` argument. Fields of a
+  typed struct named only after `@root.` are converted too.
 - **Block parameters**: `{{#each items as |item i|}}` names the item and its
   index (its key, for an object), and `{{#with person as |p|}}` the object, so
   `{{item.name}}` or `{{g.name}}` reach them from any depth below. They are
@@ -352,8 +357,18 @@ it and the latest results.
   the item's `@key` (as `#each`'s): it can't pass values of its own, as
   handlebars.js's `blockParams` can. Its body's context is a node the
   arguments find (`this`, a param, an item), never a computed value.
-- `@root`. Any `@name` other than `index`, `key`, `first` and `last` is a
-  compile error.
+- Any other `@name` is a compile error, and so is `@../root`. In
+  particular:
+  - Private data passed with the render, as handlebars.js's `data` option
+    (`template(context, { data: { user: ... } })`, read as `{{@user}}`). It
+    is a second input, separate from the context, which no render function
+    takes.
+  - Helpers reading the data variables (handlebars.js's `options.data`): a
+    helper gets `@index` and the others only as arguments,
+    `{{helper @index}}`.
+  - `@level`: there is no logger and no `{{log}}` helper.
+- `{{@root/name}}`: only `.` separates the segments after `@root`
+  (handlebars.js accepts `/` too).
 - User helper answers that are objects or arrays. Answers are scalars for now
   (the built-in `lookup` is the exception).
 - A user helper named `lookup` is never called: the built-in wins
