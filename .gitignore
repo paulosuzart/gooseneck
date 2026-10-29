@@ -1,2 +1,3 @@
 build/
-benchmark/examples/http/hello
+benchmark/
+examples/http/hello
