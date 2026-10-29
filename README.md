@@ -76,6 +76,9 @@ everything it supports: the test suites check it case by case.
 - A user helper named `lookup` is never called: the built-in wins
   (handlebars.js lets `registerHelper` replace it). A `lookup` without exactly
   two params renders nothing (handlebars.js throws).
+- A bracketed segment with a space or a dot, such as `{{a.[x y]}}` or
+  `{{a.[x.y]}}`, compiles but finds nothing (handlebars.js reads it as one
+  literal key).
 - `{{this}}` on an object or array writes nothing (handlebars.js writes
   `[object Object]` or a comma-joined list).
 - A call no registered helper answers renders nothing and is falsy
