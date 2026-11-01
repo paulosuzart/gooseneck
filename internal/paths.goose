@@ -5,7 +5,7 @@ namespace gooseneck;
 // ---------------------------------------------------------------------------
 // Paths: https://handlebarsjs.com/guide/expressions.html
 
-const INVALID_SEGMENT = "Invalid characted in segment";
+const INVALID_SEGMENT = "Invalid character in segment";
 const KEYWORD_IN_PATH = "true, false, null, or undefined allowed only at the beginning of the path";
 const UNKNOWN_DATA = "Unknown data variable: only @root, and @index, @key, @first and @last after any ../";
 

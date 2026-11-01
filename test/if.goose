@@ -207,5 +207,5 @@ fn main() {
     check_rejected("includeZero subexpression", "{{#if yes includeZero=(no)}}x{{/if}}", context, "1:11: #if: includeZero must be true or false");
     check_rejected("unclosed string", "{{#if \"abc}}x{{/if}}", context, "1:7: unclosed string: \"abc");
     check_rejected("param after hash", "{{#if includeZero=true yes}}x{{/if}}", context, "1:24: positional argument after hash arguments: yes");
-    check_rejected("bad arg path", "{{#if a!}}x{{/if}}", context, "1:7: Invalid characted in segment: a!");
+    check_rejected("bad arg path", "{{#if a!}}x{{/if}}", context, "1:7: Invalid character in segment: a!");
 }

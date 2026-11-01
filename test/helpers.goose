@@ -253,8 +253,8 @@ fn main() {
     check_rejected("empty subexpression", "{{#if ()}}x{{/if}}", context, "1:7: missing helper name: ()");
     check_rejected("text after subexpression", "{{loud (id a)b}}", context, "1:8: text after subexpression: (id a)b");
     check_rejected("unclosed string in subexpression", "{{loud (id \"a)}}", context, "1:8: unclosed string: (id \"a)");
-    check_rejected("bad helper name", "{{loud (a! b)}}", context, "1:9: Invalid characted in segment: a!");
-    check_rejected("bad argument in subexpression", "{{loud (id a!)}}", context, "1:12: Invalid characted in segment: a!");
+    check_rejected("bad helper name", "{{loud (a! b)}}", context, "1:9: Invalid character in segment: a!");
+    check_rejected("bad argument in subexpression", "{{loud (id a!)}}", context, "1:12: Invalid character in segment: a!");
     check_rejected("param after hash", "{{concat sep=\"-\" a}}", context, "1:18: positional argument after hash arguments: a");
     check_rejected("includeZero subexpression", "{{#if a includeZero=(eq a b)}}x{{/if}}", context, "1:9: #if: includeZero must be true or false");
 }

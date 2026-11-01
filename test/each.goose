@@ -174,8 +174,8 @@ fn main() {
     check("standalone params", "{{#each tags as |tag|}}\n{{tag}}\n{{/each}}\n", context, true, true, "new\nsale\n");
     check_rejected("no param names", "{{#each tags as ||}}x{{/each}}", context, "1:14: missing block parameter names: as ||");
     check_rejected("dotted param name", "{{#each tags as |a.b|}}x{{/each}}", context, "1:18: invalid block parameter name: a.b");
-    check_rejected("unclosed params", "{{#each tags as |tag}}x{{/each}}", context, "1:17: Invalid characted in segment: |tag");
-    check_rejected("params without as", "{{#each tags |tag|}}x{{/each}}", context, "1:14: Invalid characted in segment: |tag|");
+    check_rejected("unclosed params", "{{#each tags as |tag}}x{{/each}}", context, "1:17: Invalid character in segment: |tag");
+    check_rejected("params without as", "{{#each tags |tag|}}x{{/each}}", context, "1:14: Invalid character in segment: |tag|");
     check_rejected("params on if", "{{#if title as |t|}}{{t}}{{/if}}", context, "1:13: #if takes no block parameters");
 
     // @root: the context the render began with, from anywhere. On the
@@ -210,5 +210,5 @@ fn main() {
     check("else if", "{{#if empty}}x{{else if items}}y{{/if}}", context, true, true, "y");
     check_rejected("unknown data variable", "{{#each tags}}{{@level}}{{/each}}", context, "1:15: Unknown data variable: only @root, and @index, @key, @first and @last after any ../: @level");
     check_rejected("root after ../", "{{#each tags}}{{@../root.title}}{{/each}}", context, "1:15: Unknown data variable: only @root, and @index, @key, @first and @last after any ../: @../root.title");
-    check_rejected("root path ends in a dot", "{{@root.}}", context, "1:1: Invalid characted in segment: @root.");
+    check_rejected("root path ends in a dot", "{{@root.}}", context, "1:1: Invalid character in segment: @root.");
 }

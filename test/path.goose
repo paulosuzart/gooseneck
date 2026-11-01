@@ -25,6 +25,6 @@ fn main() {
     check("keyword then field", "true.name", true, "");
     check("keyword later", "foo.true", false, "true, false, null, or undefined allowed only at the beginning of the path");
     check("two keywords", "true.false", false, "true, false, null, or undefined allowed only at the beginning of the path");
-    check("invalid char", "name!", false, "Invalid characted in segment");
+    check("invalid char", "name!", false, "Invalid character in segment");
     check("empty", "", false, "Has 0 length");
 }

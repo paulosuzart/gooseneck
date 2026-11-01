@@ -133,6 +133,6 @@ fn main() {
     let bad = gooseneck::get_engine("{{name!}}");
     let bad_out: u8[>..] = [];
     let bad_json_err = gooseneck::render_json(bad, "{}", bad_out);
-    if bad.error != "1:1: Invalid characted in segment: name!" || bad_json_err != bad.error || bad_out.len != 0 { fail("template error", bad.error); }
+    if bad.error != "1:1: Invalid character in segment: name!" || bad_json_err != bad.error || bad_out.len != 0 { fail("template error", bad.error); }
     print("template error");
 }

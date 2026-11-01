@@ -388,7 +388,7 @@ it and the latest results.
   compile-time reflection) or JSON text and files.
 - **Clear compile errors**, with line and column: `4:1: unexpected /with`,
   `1:1: unclosed #each`, `1:7: unclosed subexpression: (eq a b`,
-  `2:1: #if takes exactly one argument`, `1:9: Invalid characted in segment: a!`,
+  `2:1: #if takes exactly one argument`, `1:9: Invalid character in segment: a!`,
   and more.
   Render errors for the helpers, before anything is written:
   `unknown block helper "typo"`, `duplicate helper "now"`.

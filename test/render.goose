@@ -85,8 +85,8 @@ fn main() {
     check("trailing backslash", "{{name}}\\", context, "John\\");
     check_rejected("empty template", "", context, "1:1: Must not be empty");
     check_rejected("extra with", "{{#with address}}{{street}}{{/with}}{{/with}}", context, "1:37: unexpected /with");
-    check_rejected("bad path", "{{name!}}", context, "1:1: Invalid characted in segment: name!");
-    check_rejected("bad with path", "{{#with name!}}x{{/with}}", context, "1:9: Invalid characted in segment: name!");
+    check_rejected("bad path", "{{name!}}", context, "1:1: Invalid character in segment: name!");
+    check_rejected("bad with path", "{{#with name!}}x{{/with}}", context, "1:9: Invalid character in segment: name!");
     check_rejected("keyword in path", "{{foo.true}}", context, "1:1: true, false, null, or undefined allowed only at the beginning of the path: foo.true");
     check_rejected("empty expression", "{{}}", context, "1:1: Has 0 length");
 }
