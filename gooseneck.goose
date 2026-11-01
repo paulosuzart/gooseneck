@@ -37,13 +37,13 @@ enum TokenType {
 enum TagKind { Mustache, Open, Close, Else, ElseChain, Inverse }
 
 // The kind of a tag whose trimmed body is body (see TagKind).
-fn _tag_kind(body: const u8[:]) -> TagKind {
+fn tag_kind(body: const u8[:]) -> TagKind {
     guard body.len > 0 else { return TagKind.Mustache; }
     if body[0] == '#' { return TagKind.Open; }
     if body[0] == '/' { return TagKind.Close; }
     if body[0] == '^' { return TagKind.Inverse; }
     if body == "else" { return TagKind.Else; }
-    if body.len > 4 && starts_with(body, "else") && _is_space(body[4]) { return TagKind.ElseChain; }
+    if body.len > 4 && starts_with(body, "else") && is_space(body[4]) { return TagKind.ElseChain; }
     return TagKind.Mustache;
 }
 
@@ -70,7 +70,7 @@ struct Token {
     strip_right: bool,
 }
 
-fn _text_token(start: i64, end: i64) -> Token {
+fn text_token(start: i64, end: i64) -> Token {
     return Token {
         token_type: TokenType.Text,
         tag: TagKind.Mustache,
@@ -83,7 +83,7 @@ fn _text_token(start: i64, end: i64) -> Token {
 // {{{x}}}, {{! x }} and {{!-- x --}}, each with an optional ~ just inside
 // either end: {{~x~}}, {{~{x}~}}, {{~!-- x --~}}. Returns the tag's token,
 // and an error, empty when the tag closes.
-fn _scan_tag(input: const u8[:], at: i64) -> Token, const u8[:] {
+fn scan_tag(input: const u8[:], at: i64) -> Token, const u8[:] {
     var p = at + 2;
     let strip_left = p < input.len && input[p] == '~';
     if strip_left { p += 1; }
@@ -116,7 +116,7 @@ fn _scan_tag(input: const u8[:], at: i64) -> Token, const u8[:] {
             let lead = trim_start(body);
             let start = p + body.len - lead.len;
             let end = start + trim_end(lead).len;
-            let tag = if kind == TokenType.Expression { _tag_kind(input[start..end]) } else { TagKind.Mustache };
+            let tag = if kind == TokenType.Expression { tag_kind(input[start..end]) } else { TagKind.Mustache };
             return Token {
                 token_type: kind,
                 tag: tag,
@@ -128,12 +128,12 @@ fn _scan_tag(input: const u8[:], at: i64) -> Token, const u8[:] {
         from = close + 1;
         found = find(input[from..], "}}");
     }
-    return _text_token(at, at), "unclosed tag";
+    return text_token(at, at), "unclosed tag";
 }
 
 // A tag token for template[start..end], the tag being
 // template[outer_start..outer_end].
-fn _tag_token(kind: TokenType, start: i64, end: i64, outer_start: i64, outer_end: i64) -> Token {
+fn tag_token(kind: TokenType, start: i64, end: i64, outer_start: i64, outer_end: i64) -> Token {
     return Token {
         token_type: kind,
         tag: TagKind.Mustache,
@@ -145,16 +145,16 @@ fn _tag_token(kind: TokenType, start: i64, end: i64, outer_start: i64, outer_end
 // The token of the tag that opens with "{{{{" at input[at] and closes
 // with "}}}}", its body trimmed: {{{{raw}}}} or {{{{/raw}}}}. Returns an
 // error, empty when the tag closes.
-fn _scan_raw_tag(input: const u8[:], at: i64, kind: TokenType) -> Token, const u8[:] {
+fn scan_raw_tag(input: const u8[:], at: i64, kind: TokenType) -> Token, const u8[:] {
     let found = find(input[at + 4..], "}}}}");
-    guard found >= 0 else { return _text_token(at, at), "unclosed tag"; }
+    guard found >= 0 else { return text_token(at, at), "unclosed tag"; }
     let close = at + 4 + found;
     var start = at + 4;
     if kind == TokenType.RawClose { start += 1; }
     var end = close;
-    while start < end && _is_space(input[start]) { start += 1; }
-    while end > start && _is_space(input[end - 1]) { end -= 1; }
-    return _tag_token(kind, start, end, at, close + 4), "";
+    while start < end && is_space(input[start]) { start += 1; }
+    while end > start && is_space(input[end - 1]) { end -= 1; }
+    return tag_token(kind, start, end, at, close + 4), "";
 }
 
 // Reads the raw block that opens at input[at], {{{{helper}}}}...{{{{/helper}}}},
@@ -164,8 +164,8 @@ fn _scan_raw_tag(input: const u8[:], at: i64, kind: TokenType) -> Token, const u
 // handlebars.js. Without a closing tag the content runs to the end, and
 // the parser reports the block as unclosed. Returns where the block ends,
 // and an error, empty when its tags close.
-fn _scan_raw_block(input: const u8[:], at: i64, tokens: Token[>..]&) -> i64, const u8[:] {
-    let open, err = _scan_raw_tag(input, at, TokenType.RawOpen);
+fn scan_raw_block(input: const u8[:], at: i64, tokens: Token[>..]&) -> i64, const u8[:] {
+    let open, err = scan_raw_tag(input, at, TokenType.RawOpen);
     guard err.len == 0 else { return at, err; }
     tokens.push(open);
     let content = open.outer_end;
@@ -181,27 +181,27 @@ fn _scan_raw_block(input: const u8[:], at: i64, tokens: Token[>..]&) -> i64, con
             p = tag_at + 4;
             continue;
         }
-        let close, close_err = _scan_raw_tag(input, tag_at, TokenType.RawClose);
+        let close, close_err = scan_raw_tag(input, tag_at, TokenType.RawClose);
         guard close_err.len == 0 else { break; }
         depth -= 1;
         if depth == 0 {
-            _push_text(tokens, content, tag_at);
+            push_text(tokens, content, tag_at);
             tokens.push(close);
             return close.outer_end, "";
         }
         p = close.outer_end;
     }
-    _push_text(tokens, content, input.len);
+    push_text(tokens, content, input.len);
     return input.len, "";
 }
 
 // Pushes a Text token for input[start..end] when that range holds something.
-fn _push_text(tokens: Token[>..]&, start: i64, end: i64) {
-    if end > start { tokens.push(_text_token(start, end)); }
+fn push_text(tokens: Token[>..]&, start: i64, end: i64) {
+    if end > start { tokens.push(text_token(start, end)); }
 }
 
 // How many backslashes come right before input[at], back to from.
-fn _backslashes_before(input: const u8[:], from: i64, at: i64) -> i64 {
+fn backslashes_before(input: const u8[:], from: i64, at: i64) -> i64 {
     var p = at;
     while p > from && input[p - 1] == '\\' { p -= 1; }
     return at - p;
@@ -210,11 +210,11 @@ fn _backslashes_before(input: const u8[:], from: i64, at: i64) -> i64 {
 // Where the text of an escaped mustache, \{{...}}, that starts at
 // input[at] ends: before the next "{{", and before the one or two
 // backslashes that may escape that one; at the end of input otherwise.
-fn _escaped_end(input: const u8[:], at: i64) -> i64 {
+fn escaped_end(input: const u8[:], at: i64) -> i64 {
     let found = find(input[at + 2..], "{{");
     guard found >= 0 else { return input.len; }
     let next = at + 2 + found;
-    let slashes = _backslashes_before(input, at + 2, next);
+    let slashes = backslashes_before(input, at + 2, next);
     return next - min(slashes, 2);
 }
 
@@ -233,13 +233,13 @@ fn _escaped_end(input: const u8[:], at: i64) -> i64 {
 // as stripped, and a neighbor that is another tag makes the line not
 // standalone. The start and the end of the template count as line breaks.
 
-fn _is_space(c: u8) -> bool {
+fn is_space(c: u8) -> bool {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 11 || c == 12;
 }
 
 // Whether token is a tag that standalone lines apply to: a block tag,
 // {{else}}, a raw block's tag or a comment.
-fn _standalone_kind(token: const Token&) -> bool {
+fn standalone_kind(token: const Token&) -> bool {
     if token.token_type == TokenType.Comment || token.token_type == TokenType.RawOpen || token.token_type == TokenType.RawClose { return true; }
     return token.token_type == TokenType.Expression && token.tag != TagKind.Mustache;
 }
@@ -248,14 +248,14 @@ fn _standalone_kind(token: const Token&) -> bool {
 // the text before it ends in whitespace that holds a '\n'. The first token
 // of the template also passes when it is all whitespace, and so does
 // nothing at all before the tag.
-fn _prev_blank(input: const u8[:], tokens: const Token[>..]&, i: i64) -> bool {
+fn prev_blank(input: const u8[:], tokens: const Token[>..]&, i: i64) -> bool {
     guard i > 0 else { return true; }
     let prev = tokens[i - 1];
     guard prev.token_type == TokenType.Text else { return false; }
     let text = input[prev.outer_start..prev.outer_end];
     var k = text.len;
     var newline = false;
-    while k > 0 && _is_space(text[k - 1]) {
+    while k > 0 && is_space(text[k - 1]) {
         if text[k - 1] == '\n' { newline = true; }
         k -= 1;
     }
@@ -266,14 +266,14 @@ fn _prev_blank(input: const u8[:], tokens: const Token[>..]&, i: i64) -> bool {
 // tokens[i]: the text after it starts with whitespace that holds a '\n'.
 // The last token of the template also passes when it is all whitespace,
 // and so does nothing at all after the tag.
-fn _next_blank(input: const u8[:], tokens: const Token[>..]&, i: i64) -> bool {
+fn next_blank(input: const u8[:], tokens: const Token[>..]&, i: i64) -> bool {
     guard i + 1 < tokens.len else { return true; }
     let next = tokens[i + 1];
     guard next.token_type == TokenType.Text else { return false; }
     let text = input[next.outer_start..next.outer_end];
     var k: i64 = 0;
     var newline = false;
-    while k < text.len && _is_space(text[k]) {
+    while k < text.len && is_space(text[k]) {
         if text[k] == '\n' { newline = true; }
         k += 1;
     }
@@ -281,22 +281,22 @@ fn _next_blank(input: const u8[:], tokens: const Token[>..]&, i: i64) -> bool {
 }
 
 // ~ before the tag: drops all trailing whitespace.
-fn _strip_end(input: const u8[:], t: Token&) {
-    while t.end > t.start && _is_space(input[t.end - 1]) { t.end -= 1; }
+fn strip_end(input: const u8[:], t: Token&) {
+    while t.end > t.start && is_space(input[t.end - 1]) { t.end -= 1; }
 }
 
 // ~ after the tag: drops all leading whitespace.
-fn _strip_start(input: const u8[:], t: Token&) {
-    while t.start < t.end && _is_space(input[t.start]) { t.start += 1; }
+fn strip_start(input: const u8[:], t: Token&) {
+    while t.start < t.end && is_space(input[t.start]) { t.start += 1; }
 }
 
 // Standalone, before the tag: drops the line's indentation, spaces and tabs.
-fn _strip_indent(input: const u8[:], t: Token&) {
+fn strip_indent(input: const u8[:], t: Token&) {
     while t.end > t.start && (input[t.end - 1] == ' ' || input[t.end - 1] == '\t') { t.end -= 1; }
 }
 
 // Standalone, after the tag: drops spaces and tabs, then one "\n" or "\r\n".
-fn _strip_line_end(input: const u8[:], t: Token&) {
+fn strip_line_end(input: const u8[:], t: Token&) {
     while t.start < t.end && (input[t.start] == ' ' || input[t.start] == '\t') { t.start += 1; }
     if t.start < t.end && input[t.start] == '\r' && t.start + 1 < t.end && input[t.start + 1] == '\n' {
         t.start += 2;
@@ -308,18 +308,18 @@ fn _strip_line_end(input: const u8[:], t: Token&) {
 // Applies ~ and standalone lines to the Text tokens around each tag. The
 // _strip_* helpers narrow tokens[i - 1] and tokens[i + 1] in place; tag is a
 // copy, and only read.
-fn _control_whitespace(input: const u8[:], tokens: Token[>..]&) {
+fn control_whitespace(input: const u8[:], tokens: Token[>..]&) {
     var i: i64 = 0;
     while i < tokens.len {
         let tag = tokens[i];
         if tag.token_type != TokenType.Text {
             let has_prev = i > 0 && tokens[i - 1].token_type == TokenType.Text;
             let has_next = i + 1 < tokens.len && tokens[i + 1].token_type == TokenType.Text;
-            if tag.strip_left && has_prev { _strip_end(input, tokens[i - 1]); }
-            if tag.strip_right && has_next { _strip_start(input, tokens[i + 1]); }
-            if _standalone_kind(tag) && _prev_blank(input, tokens, i) && _next_blank(input, tokens, i) {
-                if has_prev { _strip_indent(input, tokens[i - 1]); }
-                if has_next { _strip_line_end(input, tokens[i + 1]); }
+            if tag.strip_left && has_prev { strip_end(input, tokens[i - 1]); }
+            if tag.strip_right && has_next { strip_start(input, tokens[i + 1]); }
+            if standalone_kind(tag) && prev_blank(input, tokens, i) && next_blank(input, tokens, i) {
+                if has_prev { strip_indent(input, tokens[i - 1]); }
+                if has_next { strip_line_end(input, tokens[i + 1]); }
             }
         }
         i += 1;
@@ -335,7 +335,7 @@ const INVALID_IDENTIFIER_CHARS: u8[27] = ['!', '"', '#', '%', '&','\'', '(', ')'
 // whether it climbs to the parent frame. ../ and .. climb; ./, ., this,
 // this. and this/ stay on the current frame. Zero bytes when path starts
 // with a field name instead.
-fn _navigation_step(path: const u8[:]) -> i64, bool {
+fn navigation_step(path: const u8[:]) -> i64, bool {
     if starts_with(path, "../") { return 3, true; }
     if path == ".." { return 2, true; }
     if starts_with(path, "./") { return 2, false; }
@@ -348,10 +348,10 @@ fn _navigation_step(path: const u8[:]) -> i64, bool {
 // Drops the leading navigation steps (see _navigation_step). What remains
 // is the field path the identifier check sees. ../name is parent then
 // name, not a name that contains '/'.
-fn _strip_navigation(path: const u8[:]) -> const u8[:] {
+fn strip_navigation(path: const u8[:]) -> const u8[:] {
     var rest = path;
     loop {
-        let taken, climbs = _navigation_step(rest);
+        let taken, climbs = navigation_step(rest);
         if taken == 0 { break; }
         rest = rest[taken..];
     }
@@ -364,7 +364,7 @@ const DATA_NAMES = ["index", "key", "first", "last"];
 // Splits a path that starts at the context the render began with, @root
 // or @root.name..., into true and the path after "@root.": "" for @root,
 // "a.b" for @root.a.b. Any other path: false and "".
-fn _root_parts(path: const u8[:]) -> bool, const u8[:] {
+fn root_parts(path: const u8[:]) -> bool, const u8[:] {
     guard starts_with(path, "@root") else { return false, ""; }
     let rest = path[5..];
     if rest.len == 0 { return true, rest; }
@@ -375,7 +375,7 @@ fn _root_parts(path: const u8[:]) -> bool, const u8[:] {
 // Splits a data path, @ then any number of ../ then a name, into how many
 // enclosing each blocks it climbs and the name: @../index is 1 and
 // "index". Not a data path: -1 and "".
-fn _data_parts(path: const u8[:]) -> i64, const u8[:] {
+fn data_parts(path: const u8[:]) -> i64, const u8[:] {
     guard starts_with(path, "@") else { return -1, ""; }
     var rest = path[1..];
     var depth: i64 = 0;
@@ -388,8 +388,8 @@ fn _data_parts(path: const u8[:]) -> i64, const u8[:] {
 
 // Whether path is a data variable: @, any number of ../, and one of
 // DATA_NAMES.
-fn _is_data_path(path: const u8[:]) -> bool {
-    let depth, name = _data_parts(path);
+fn is_data_path(path: const u8[:]) -> bool {
+    let depth, name = data_parts(path);
     guard depth >= 0 else { return false; }
     for known in DATA_NAMES {
         if name == known { return true; }
@@ -441,33 +441,33 @@ enum TagTokenKind {
 struct TagToken { kind: TagTokenKind, start: i64, end: i64, spaced: bool }
 
 // The text of a token.
-fn _token_text(source: const u8[:], token: TagToken) -> const u8[:] {
+fn token_text(source: const u8[:], token: TagToken) -> const u8[:] {
     return source[token.start..token.end];
 }
 
 // Whether a word ends at source[at], so a literal may end there.
-fn _literal_ends(source: const u8[:], at: i64, stop: i64) -> bool {
-    return at == stop || _is_space(source[at]) || source[at] == ')';
+fn literal_ends(source: const u8[:], at: i64, stop: i64) -> bool {
+    return at == stop || is_space(source[at]) || source[at] == ')';
 }
 
 // Where the name segment that starts at source[at] ends.
-fn _ident_end(source: const u8[:], at: i64, stop: i64) -> i64 {
+fn ident_end(source: const u8[:], at: i64, stop: i64) -> i64 {
     var p = at;
-    while p < stop && !_is_space(source[p]) && !INVALID_IDENTIFIER_CHARS.contains(source[p]) { p += 1; }
+    while p < stop && !is_space(source[p]) && !INVALID_IDENTIFIER_CHARS.contains(source[p]) { p += 1; }
     return p;
 }
 
 // The literal that starts a word at source[at], if one does: its kind and
 // end. Ident when the word holds no literal.
-fn _literal_at(source: const u8[:], at: i64, stop: i64) -> TagTokenKind, i64 {
+fn literal_at(source: const u8[:], at: i64, stop: i64) -> TagTokenKind, i64 {
     let c = source[at];
     let digit_next = at + 1 < stop && source[at + 1] >= '0' && source[at + 1] <= '9';
     if (c >= '0' && c <= '9') || (c == '-' && digit_next) {
         let number = json::scan_number(source[..stop], at);
-        if number.end > at && _literal_ends(source, number.end, stop) { return TagTokenKind.Number, number.end; }
+        if number.end > at && literal_ends(source, number.end, stop) { return TagTokenKind.Number, number.end; }
     }
-    let end = _ident_end(source, at, stop);
-    if _literal_ends(source, end, stop) {
+    let end = ident_end(source, at, stop);
+    if literal_ends(source, end, stop) {
         let word = source[at..end];
         if word == "true" || word == "false" { return TagTokenKind.Bool, end; }
         if word == "null" || word == "undefined" { return TagTokenKind.Null, end; }
@@ -477,7 +477,7 @@ fn _literal_at(source: const u8[:], at: i64, stop: i64) -> TagTokenKind, i64 {
 
 // Where a quoted string that opens at source[at] ends, past its closing
 // quote, and whether it closes before stop.
-fn _string_end(source: const u8[:], at: i64, stop: i64) -> i64, bool {
+fn string_end(source: const u8[:], at: i64, stop: i64) -> i64, bool {
     var p = at + 1;
     while p < stop && source[p] != source[at] { p += 1; }
     guard p < stop else { return stop, false; }
@@ -486,10 +486,10 @@ fn _string_end(source: const u8[:], at: i64, stop: i64) -> i64, bool {
 
 // The kind and end of the token at source[at]. after_segment says whether
 // a name segment ends right before it, word_start whether it starts a word.
-fn _lex_one(source: const u8[:], at: i64, stop: i64, after_segment: bool, word_start: bool) -> TagTokenKind, i64 {
+fn lex_one(source: const u8[:], at: i64, stop: i64, after_segment: bool, word_start: bool) -> TagTokenKind, i64 {
     let c = source[at];
     if c == '"' || c == '\'' {
-        let end, closed = _string_end(source, at, stop);
+        let end, closed = string_end(source, at, stop);
         if closed { return TagTokenKind.String, end; }
         return TagTokenKind.UnclosedString, end;
     }
@@ -510,13 +510,13 @@ fn _lex_one(source: const u8[:], at: i64, stop: i64, after_segment: bool, word_s
         return TagTokenKind.Invalid, at + 1;
     }
     if INVALID_IDENTIFIER_CHARS.contains(c) { return TagTokenKind.Invalid, at + 1; }
-    if word_start { return _literal_at(source, at, stop); }
-    return TagTokenKind.Ident, _ident_end(source, at, stop);
+    if word_start { return literal_at(source, at, stop); }
+    return TagTokenKind.Ident, ident_end(source, at, stop);
 }
 
 // Whether a token may start a word's literal: the first token, one after
 // whitespace, or one right after '=' or '('.
-fn _starts_word(tokens: const TagToken[>..<]&, spaced: bool) -> bool {
+fn starts_word(tokens: const TagToken[>..<]&, spaced: bool) -> bool {
     guard tokens.len > 0 && !spaced else { return true; }
     let kind = tokens[tokens.len - 1].kind;
     return kind == TagTokenKind.Equals || kind == TagTokenKind.LParen;
@@ -524,7 +524,7 @@ fn _starts_word(tokens: const TagToken[>..<]&, spaced: bool) -> bool {
 
 // Whether the last token is a name segment that ends right where the next
 // token starts.
-fn _segment_before(tokens: const TagToken[>..<]&, spaced: bool) -> bool {
+fn segment_before(tokens: const TagToken[>..<]&, spaced: bool) -> bool {
     guard tokens.len > 0 && !spaced else { return false; }
     let kind = tokens[tokens.len - 1].kind;
     return kind == TagTokenKind.Ident || kind == TagTokenKind.Number || kind == TagTokenKind.Bool || kind == TagTokenKind.Null;
@@ -533,34 +533,34 @@ fn _segment_before(tokens: const TagToken[>..<]&, spaced: bool) -> bool {
 // Marks the "as" of a block's trailing block parameters, as |a b|: the
 // tokens end in '|', the '|' before that one comes right after an "as"
 // that is a word of its own, and that word is not the first.
-fn _mark_block_params(source: const u8[:], tokens: TagToken[>..<]&) {
+fn mark_block_params(source: const u8[:], tokens: TagToken[>..<]&) {
     guard tokens.len >= 3 && tokens[tokens.len - 1].kind == TagTokenKind.Pipe else { return; }
     var bar = tokens.len - 2;
     while bar >= 0 && tokens[bar].kind != TagTokenKind.Pipe { bar -= 1; }
     guard bar >= 2 else { return; }
     let as_word = tokens[bar - 1];
-    guard as_word.kind == TagTokenKind.Ident && as_word.spaced && _token_text(source, as_word) == "as" else { return; }
+    guard as_word.kind == TagTokenKind.Ident && as_word.spaced && token_text(source, as_word) == "as" else { return; }
     tokens[bar - 1].kind = TagTokenKind.As;
 }
 
 // Splits source[start..stop], the body of a tag, into tokens, replacing
 // what tokens held.
-fn _lex_tag(source: const u8[:], start: i64, stop: i64, tokens: TagToken[>..<]&) {
+fn lex_tag(source: const u8[:], start: i64, stop: i64, tokens: TagToken[>..<]&) {
     tokens.clear();
     var p = start;
     var spaced = false;
     while p < stop {
-        if _is_space(source[p]) {
+        if is_space(source[p]) {
             spaced = true;
             p += 1;
             continue;
         }
-        let kind, end = _lex_one(source, p, stop, _segment_before(tokens, spaced), _starts_word(tokens, spaced));
+        let kind, end = lex_one(source, p, stop, segment_before(tokens, spaced), starts_word(tokens, spaced));
         tokens.push(TagToken { kind: kind, start: p, end: end, spaced: spaced });
         spaced = false;
         p = end;
     }
-    _mark_block_params(source, tokens);
+    mark_block_params(source, tokens);
 }
 
 // ---------------------------------------------------------------------------
@@ -572,29 +572,29 @@ const UNKNOWN_DATA = "Unknown data variable: only @root, and @index, @key, @firs
 
 // Whether a token can be one segment of a path: a name, or a word the lexer
 // read as a literal (a path may start with true: true.name).
-fn _is_segment(token: TagToken) -> bool {
+fn is_segment(token: TagToken) -> bool {
     let kind = token.kind;
     return kind == TagTokenKind.Ident || kind == TagTokenKind.Number || kind == TagTokenKind.Bool || kind == TagTokenKind.Null;
 }
 
 // Whether a segment's text is one of the literal words.
-fn _is_keyword(text: const u8[:]) -> bool {
+fn is_keyword(text: const u8[:]) -> bool {
     return text == "true" || text == "false" || text == "null" || text == "undefined";
 }
 
 // Whether tokens[i] is a navigation step: .., . or this.
-fn _is_navigation(source: const u8[:], tokens: const TagToken[>..<]&, i: i64) -> bool {
+fn is_navigation(source: const u8[:], tokens: const TagToken[>..<]&, i: i64) -> bool {
     let token = tokens[i];
     if token.kind == TagTokenKind.DotDot || token.kind == TagTokenKind.Dot { return true; }
-    return token.kind == TagTokenKind.Ident && _token_text(source, token) == "this";
+    return token.kind == TagTokenKind.Ident && token_text(source, token) == "this";
 }
 
 // Where the field segments of the path tokens[from..to] start: past its
 // leading navigation, ../, ./, this. or this/, any number of them, and a
 // last .., . or this.
-fn _skip_navigation(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> i64 {
+fn skip_navigation(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> i64 {
     var i = from;
-    while i < to && _is_navigation(source, tokens, i) {
+    while i < to && is_navigation(source, tokens, i) {
         i += 1;
         let separated = i < to && (tokens[i].kind == TagTokenKind.Slash || tokens[i].kind == TagTokenKind.Sep);
         guard separated else { break; }
@@ -607,35 +607,35 @@ fn _skip_navigation(source: const u8[:], tokens: const TagToken[>..<]&, from: i6
 // must be a data variable (@, any ../, a data name), @root and name
 // segments after it, or navigation then name segments joined by '.'. A
 // literal word is a segment only first.
-fn _path_error(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> const u8[:] {
+fn path_error(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> const u8[:] {
     guard to > from else { return "Has 0 length"; }
     if tokens[from].kind == TagTokenKind.Data {
         let text = source[tokens[from].start..tokens[to - 1].end];
-        if _is_data_path(text) { return ""; }
-        let rooted, rest = _root_parts(text);
+        if is_data_path(text) { return ""; }
+        let rooted, rest = root_parts(text);
         guard rooted else { return UNKNOWN_DATA; }
         // @ and root, then '.' and the segments.
         guard to > from + 2 else { return ""; }
         guard to > from + 3 else { return INVALID_SEGMENT; }
-        return _segments_error(source, tokens, from + 3, to);
+        return segments_error(source, tokens, from + 3, to);
     }
-    return _segments_error(source, tokens, _skip_navigation(source, tokens, from, to), to);
+    return segments_error(source, tokens, skip_navigation(source, tokens, from, to), to);
 }
 
 // What is wrong with name segments joined by '.', tokens[body..to], or ""
 // when nothing is: a literal word is a segment only first, and the path
 // neither ends in a '.' nor has two in a row.
-fn _segments_error(source: const u8[:], tokens: const TagToken[>..<]&, body: i64, to: i64) -> const u8[:] {
+fn segments_error(source: const u8[:], tokens: const TagToken[>..<]&, body: i64, to: i64) -> const u8[:] {
     var i = body;
     while i < to {
         let later = i > body;
-        if later && _is_segment(tokens[i]) && _is_keyword(_token_text(source, tokens[i])) { return KEYWORD_IN_PATH; }
+        if later && is_segment(tokens[i]) && is_keyword(token_text(source, tokens[i])) { return KEYWORD_IN_PATH; }
         i += 1;
     }
     i = body;
     while i < to {
         let wants_segment = (i - body) % 2 == 0;
-        let fits = if wants_segment { _is_segment(tokens[i]) } else { tokens[i].kind == TagTokenKind.Sep };
+        let fits = if wants_segment { is_segment(tokens[i]) } else { tokens[i].kind == TagTokenKind.Sep };
         guard fits else { return INVALID_SEGMENT; }
         i += 1;
     }
@@ -646,10 +646,10 @@ fn _segments_error(source: const u8[:], tokens: const TagToken[>..<]&, body: i64
 
 // Checks a path on its own: whether it is valid, and if not, why (see
 // _path_error).
-fn _validate_path(path: const u8[:]) -> bool, u8[:] {
+fn validate_path(path: const u8[:]) -> bool, u8[:] {
     let tokens: TagToken[>..<] = [];
-    _lex_tag(path, 0, path.len, tokens);
-    let why = _path_error(path, tokens, 0, tokens.len);
+    lex_tag(path, 0, path.len, tokens);
+    let why = path_error(path, tokens, 0, tokens.len);
     return why.len == 0, why;
 }
 
@@ -662,7 +662,7 @@ fn _validate_path(path: const u8[:]) -> bool, u8[:] {
 // As in handlebars.js, \{{ escapes a mustache: the backslash is dropped,
 // and the text from "{{" to the next mustache is written as it is. \\{{
 // writes one backslash, and the mustache after it is a mustache.
-fn _tokenize(input: const u8[:]) -> Token[>..], const u8[:] {
+fn tokenize(input: const u8[:]) -> Token[>..], const u8[:] {
     guard input.len > 0 else { return [], "Must not be empty"; }
 
     let tokens: Token[>..] = [];
@@ -670,31 +670,31 @@ fn _tokenize(input: const u8[:]) -> Token[>..], const u8[:] {
     var at: i64 = 0;
     while at + 1 < input.len {
         if input[at] == '{' && input[at + 1] == '{' {
-            let slashes = _backslashes_before(input, text_start, at);
+            let slashes = backslashes_before(input, text_start, at);
             if slashes == 1 {
-                _push_text(tokens, text_start, at - 1);
-                let end = _escaped_end(input, at);
-                _push_text(tokens, at, end);
+                push_text(tokens, text_start, at - 1);
+                let end = escaped_end(input, at);
+                push_text(tokens, at, end);
                 at = end;
                 text_start = at;
                 continue;
             }
             if slashes >= 2 {
                 // Drop the backslash that escaped the other.
-                _push_text(tokens, text_start, at - 1);
+                push_text(tokens, text_start, at - 1);
                 text_start = at;
             }
             if starts_with(input[at..], "{{{{") {
-                _push_text(tokens, text_start, at);
-                let end, raw_err = _scan_raw_block(input, at, tokens);
+                push_text(tokens, text_start, at);
+                let end, raw_err = scan_raw_block(input, at, tokens);
                 guard raw_err.len == 0 else { return [], raw_err; }
                 at = end;
                 text_start = at;
                 continue;
             }
-            let tag, err = _scan_tag(input, at);
+            let tag, err = scan_tag(input, at);
             guard err.len == 0 else { return [], err; }
-            _push_text(tokens, text_start, at);
+            push_text(tokens, text_start, at);
             tokens.push(tag);
             at = tag.outer_end;
             text_start = at;
@@ -702,8 +702,8 @@ fn _tokenize(input: const u8[:]) -> Token[>..], const u8[:] {
             at += 1;
         }
     }
-    _push_text(tokens, text_start, input.len);
-    _control_whitespace(input, tokens);
+    push_text(tokens, text_start, input.len);
+    control_whitespace(input, tokens);
     return tokens, "";
 }
 
@@ -721,7 +721,7 @@ const HTML_ESCAPED = [
     "&#x3D;",
 ];
 
-fn _append_html_escaped(out: u8[>..]&, text: const u8[:]) {
+fn append_html_escaped(out: u8[>..]&, text: const u8[:]) {
     var i: i64 = 0;
     while i < text.len {
         let at = position(HTML_CHARS, text[i]);
@@ -787,7 +787,7 @@ struct Node {
 struct ParamRef { up: i64, slot: i64 }
 
 // A path that is looked up in the context, not a block parameter.
-fn _no_param_ref() -> ParamRef {
+fn no_param_ref() -> ParamRef {
     return ParamRef { up: NONE, slot: NONE };
 }
 
@@ -812,7 +812,7 @@ enum ArgValue {
 struct Arg { key: Span, value: ArgValue }
 
 // The argument at position i of range, counting from 0.
-fn _arg_at(args: const Arg[:], range: Range, i: i64) -> Arg {
+fn arg_at(args: const Arg[:], range: Range, i: i64) -> Arg {
     return args[range.first + i];
 }
 
@@ -848,7 +848,7 @@ struct Engine {
 }
 
 // The text a span views.
-fn _span_text(text: const u8[:], span: Span) -> const u8[:] {
+fn span_text(text: const u8[:], span: Span) -> const u8[:] {
     return text[span.start..span.start + span.len];
 }
 
@@ -875,21 +875,21 @@ fn _span_text(text: const u8[:], span: Span) -> const u8[:] {
 struct OpenBlock { opener: i64, last: i64, in_inverse: bool, chained: bool, names: Range }
 
 // The top level, or a block that {{#helper}} opened, declaring names.
-fn _open_block(opener: i64, names: Range) -> OpenBlock {
+fn open_block(opener: i64, names: Range) -> OpenBlock {
     return OpenBlock { opener: opener, last: NONE, in_inverse: false, chained: false, names: names };
 }
 
 // The position in open of the block that started the innermost chain:
 // {{#if a}} for {{#if a}}...{{else if b}}...{{else each c}}. The innermost
 // block itself when nothing is chained onto it.
-fn _chain_start(open: const OpenBlock[>..<]&) -> i64 {
+fn chain_start(open: const OpenBlock[>..<]&) -> i64 {
     var at = open.len - 1;
     while open[at].chained { at -= 1; }
     return at;
 }
 
 // The block that new nodes go into: the last one opened.
-fn _innermost(open: OpenBlock[>..<]&) -> OpenBlock& {
+fn innermost(open: OpenBlock[>..<]&) -> OpenBlock& {
     return open[open.len - 1];
 }
 
@@ -897,17 +897,17 @@ fn _innermost(open: OpenBlock[>..<]&) -> OpenBlock& {
 // closing tag such as {{/with}} only closes the block its opener started.
 // For a chain, {{#if a}}...{{else with b}}...{{/if}}, that is the block
 // that started it. False at the top level, where no block is open.
-fn _innermost_is(source: const u8[:], nodes: const Node[>..]&, open: const OpenBlock[>..<]&, helper: const u8[:]) -> bool {
-    let opener = open[_chain_start(open)].opener;
+fn innermost_is(source: const u8[:], nodes: const Node[>..]&, open: const OpenBlock[>..<]&, helper: const u8[:]) -> bool {
+    let opener = open[chain_start(open)].opener;
     guard opener != NONE else { return false; }
-    return _span_text(source, nodes[opener].value) == helper;
+    return span_text(source, nodes[opener].value) == helper;
 }
 
 // Pushes node and links it into the innermost open block. Returns its index.
-fn _add(nodes: Node[>..]&, roots: i64[>..]&, open: OpenBlock[>..<]&, node: Node) -> i64 {
+fn add(nodes: Node[>..]&, roots: i64[>..]&, open: OpenBlock[>..<]&, node: Node) -> i64 {
     let index = nodes.len;
     nodes.push(node);
-    let inner .= _innermost(open);
+    let inner .= innermost(open);
     if inner.opener == NONE {
         roots.push(index);
     } else if inner.last != NONE {
@@ -922,7 +922,7 @@ fn _add(nodes: Node[>..]&, roots: i64[>..]&, open: OpenBlock[>..<]&, node: Node)
 }
 
 // A node with no links and no arguments yet.
-fn _node(kind: NodeKind, start: i64, end: i64, escaped: bool) -> Node {
+fn node(kind: NodeKind, start: i64, end: i64, escaped: bool) -> Node {
     let none = Range { first: 0, count: 0 };
     return Node {
         kind: kind,
@@ -934,7 +934,7 @@ fn _node(kind: NodeKind, start: i64, end: i64, escaped: bool) -> Node {
         body: NONE,
         inverse: NONE,
         block_params: 0,
-        param_ref: _no_param_ref(),
+        param_ref: no_param_ref(),
         helper_first: false,
     };
 }
@@ -946,15 +946,15 @@ fn _node(kind: NodeKind, start: i64, end: i64, escaped: bool) -> Node {
 // _error_text joins them once parsing has stopped.
 struct CallError { message: const u8[:], text: const u8[:] }
 
-fn _no_error() -> CallError {
+fn no_error() -> CallError {
     return CallError { message: "", text: "" };
 }
 
-fn _is_ok(err: CallError) -> bool {
+fn is_ok(err: CallError) -> bool {
     return err.message.len == 0;
 }
 
-fn _error_text(err: CallError) -> u8[>..] {
+fn error_text(err: CallError) -> u8[>..] {
     return str(err.message, err.text);
 }
 
@@ -965,13 +965,13 @@ fn _error_text(err: CallError) -> u8[>..] {
 // literal, a path, or key=value with one of those as the value.
 
 // The text from the start of tokens[from] to the end of tokens[to - 1].
-fn _tokens_text(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> const u8[:] {
+fn tokens_text(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> const u8[:] {
     return source[tokens[from].start..tokens[to - 1].end];
 }
 
 // Where the helper name of a call that starts at tokens[at] ends: at the
 // next token with whitespace before it, whatever it is, or at stop.
-fn _name_end(tokens: const TagToken[>..<]&, at: i64, stop: i64) -> i64 {
+fn name_end(tokens: const TagToken[>..<]&, at: i64, stop: i64) -> i64 {
     guard at < stop else { return stop; }
     var i = at + 1;
     while i < stop && !tokens[i].spaced { i += 1; }
@@ -980,7 +980,7 @@ fn _name_end(tokens: const TagToken[>..<]&, at: i64, stop: i64) -> i64 {
 
 // Where the argument word that starts at tokens[at] ends: at the next
 // token with whitespace before it outside parentheses, or at stop.
-fn _word_end(tokens: const TagToken[>..<]&, at: i64, stop: i64) -> i64 {
+fn word_end(tokens: const TagToken[>..<]&, at: i64, stop: i64) -> i64 {
     var depth: i64 = 0;
     var i = at;
     while i < stop {
@@ -995,7 +995,7 @@ fn _word_end(tokens: const TagToken[>..<]&, at: i64, stop: i64) -> i64 {
 
 // The index of the ')' that closes the '(' at tokens[open], or stop when
 // none does.
-fn _closing_paren(tokens: const TagToken[>..<]&, open: i64, stop: i64) -> i64 {
+fn closing_paren(tokens: const TagToken[>..<]&, open: i64, stop: i64) -> i64 {
     var depth: i64 = 0;
     var i = open;
     while i < stop {
@@ -1013,7 +1013,7 @@ fn _closing_paren(tokens: const TagToken[>..<]&, open: i64, stop: i64) -> i64 {
 // What keeps the argument word tokens[from..to] from closing: a quote that
 // never closes, a ')' that closes nothing or a '(' that never closes.
 // Its text runs from the word to call_end, the end of the call.
-fn _word_error(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64, call_end: i64) -> CallError {
+fn word_error(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64, call_end: i64) -> CallError {
     let rest = source[tokens[from].start..call_end];
     var depth: i64 = 0;
     var i = from;
@@ -1028,26 +1028,26 @@ fn _word_error(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to
         i += 1;
     }
     guard depth == 0 else { return CallError { message: "unclosed subexpression: ", text: rest }; }
-    return _no_error();
+    return no_error();
 }
 
 // How many argument words tokens[at..stop] holds, or the error of the
 // first one that does not close.
-fn _count_args(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call_end: i64) -> i64, CallError {
+fn count_args(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call_end: i64) -> i64, CallError {
     var count: i64 = 0;
     var word = at;
     while word < stop {
-        let end = _word_end(tokens, word, stop);
-        let err = _word_error(source, tokens, word, end, call_end);
-        guard _is_ok(err) else { return count, err; }
+        let end = word_end(tokens, word, stop);
+        let err = word_error(source, tokens, word, end, call_end);
+        guard is_ok(err) else { return count, err; }
         count += 1;
         word = end;
     }
-    return count, _no_error();
+    return count, no_error();
 }
 
 // Takes count slots at the end of args, Null until the parser fills them.
-fn _reserve_args(args: Arg[>..]&, count: i64) {
+fn reserve_args(args: Arg[>..]&, count: i64) {
     var taken: i64 = 0;
     while taken < count {
         args.push(Arg { key: Span { start: 0, len: 0 }, value: ArgValue.Null });
@@ -1058,7 +1058,7 @@ fn _reserve_args(args: Arg[>..]&, count: i64) {
 // The index of the '=' of a hash argument word tokens[from..to],
 // key=value, or NONE when the word is positional. A quoted string or a
 // subexpression is never a key.
-fn _hash_equals(tokens: const TagToken[>..<]&, from: i64, to: i64) -> i64 {
+fn hash_equals(tokens: const TagToken[>..<]&, from: i64, to: i64) -> i64 {
     var i = from;
     while i < to {
         let kind = tokens[i].kind;
@@ -1071,18 +1071,18 @@ fn _hash_equals(tokens: const TagToken[>..<]&, from: i64, to: i64) -> i64 {
 
 // The helper name of the call in tokens[at..stop] must be there and read
 // as a path would. call is the text the missing name error shows.
-fn _check_helper_name(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call: const u8[:]) -> CallError {
-    let end = _name_end(tokens, at, stop);
+fn check_helper_name(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call: const u8[:]) -> CallError {
+    let end = name_end(tokens, at, stop);
     guard end > at else { return CallError { message: "missing helper name: ", text: call }; }
-    let why = _path_error(source, tokens, at, end);
+    let why = path_error(source, tokens, at, end);
     guard why.len == 0 else { return CallError { message: why, text: "" }; }
-    return _no_error();
+    return no_error();
 }
 
 // A literal word, one token: a quoted string (its text between the
 // quotes), a number, true / false or null / undefined.
-fn _literal(source: const u8[:], token: TagToken) -> ArgValue {
-    let text = _token_text(source, token);
+fn literal(source: const u8[:], token: TagToken) -> ArgValue {
+    let text = token_text(source, token);
     match token.kind {
         String => { return ArgValue.String { text: Span { start: token.start + 1, len: text.len - 2 } }; },
         Bool => { return ArgValue.Bool { v: text == "true" }; },
@@ -1096,33 +1096,33 @@ fn _literal(source: const u8[:], token: TagToken) -> ArgValue {
 }
 
 // Whether a token, as a whole word, is a literal.
-fn _is_literal(kind: TagTokenKind) -> bool {
+fn is_literal(kind: TagTokenKind) -> bool {
     return kind == TagTokenKind.String || kind == TagTokenKind.Number || kind == TagTokenKind.Bool || kind == TagTokenKind.Null;
 }
 
 // Reads the argument word tokens[from..to]: a subexpression, a literal,
 // or else a path, validated as any other. A subexpression's own arguments
 // go onto args.
-recursive fn _arg_value(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64, args: Arg[>..]&) -> ArgValue, CallError {
+recursive fn arg_value(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64, args: Arg[>..]&) -> ArgValue, CallError {
     guard to > from else { return ArgValue.Null, CallError { message: "missing argument value", text: "" }; }
     let first = tokens[from];
-    let text = _tokens_text(source, tokens, from, to);
+    let text = tokens_text(source, tokens, from, to);
     if first.kind == TagTokenKind.LParen {
-        let close = _closing_paren(tokens, from, to);
+        let close = closing_paren(tokens, from, to);
         guard close == to - 1 else { return ArgValue.Null, CallError { message: "text after subexpression: ", text: text }; }
-        let name, params, hash, err = _parse_call(source, tokens, from + 1, close, tokens[close].start, args);
-        guard _is_ok(err) else { return ArgValue.Null, err; }
-        let name_err = _check_helper_name(source, tokens, from + 1, close, text);
-        guard _is_ok(name_err) else { return ArgValue.Null, name_err; }
-        return ArgValue.Call { name: name, params: params, hash: hash }, _no_error();
+        let name, params, hash, err = parse_call(source, tokens, from + 1, close, tokens[close].start, args);
+        guard is_ok(err) else { return ArgValue.Null, err; }
+        let name_err = check_helper_name(source, tokens, from + 1, close, text);
+        guard is_ok(name_err) else { return ArgValue.Null, name_err; }
+        return ArgValue.Call { name: name, params: params, hash: hash }, no_error();
     }
     if first.kind == TagTokenKind.String {
         guard to - from == 1 else { return ArgValue.Null, CallError { message: "unclosed string: ", text: text }; }
     }
-    if to - from == 1 && _is_literal(first.kind) { return _literal(source, first), _no_error(); }
-    let why = _path_error(source, tokens, from, to);
+    if to - from == 1 && is_literal(first.kind) { return literal(source, first), no_error(); }
+    let why = path_error(source, tokens, from, to);
     guard why.len == 0 else { return ArgValue.Null, CallError { message: why, text: "" }; }
-    return ArgValue.Path { path: Span { start: first.start, len: text.len }, param_ref: _no_param_ref() }, _no_error();
+    return ArgValue.Path { path: Span { start: first.start, len: text.len }, param_ref: no_param_ref() }, no_error();
 }
 
 // Parses the helper call in tokens[at..stop] into the helper name, the
@@ -1133,8 +1133,8 @@ recursive fn _arg_value(source: const u8[:], tokens: const TagToken[>..<]&, from
 // Ranges view; a subexpression among them puts its own run after that one.
 // So the run is taken, Null, as soon as the arguments are counted, and each
 // slot is filled as its argument is read.
-recursive fn _parse_call(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call_end: i64, args: Arg[>..]&) -> Span, Range, Range, CallError {
-    let name_end = _name_end(tokens, at, stop);
+recursive fn parse_call(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call_end: i64, args: Arg[>..]&) -> Span, Range, Range, CallError {
+    let name_end = name_end(tokens, at, stop);
     let helper = if name_end > at {
         Span { start: tokens[at].start, len: tokens[name_end - 1].end - tokens[at].start }
     } else {
@@ -1142,35 +1142,35 @@ recursive fn _parse_call(source: const u8[:], tokens: const TagToken[>..<]&, at:
     };
     var params = Range { first: args.len, count: 0 };
     var hash = Range { first: args.len, count: 0 };
-    let count, count_err = _count_args(source, tokens, name_end, stop, call_end);
-    guard _is_ok(count_err) else { return helper, params, hash, count_err; }
-    _reserve_args(args, count);
+    let count, count_err = count_args(source, tokens, name_end, stop, call_end);
+    guard is_ok(count_err) else { return helper, params, hash, count_err; }
+    reserve_args(args, count);
     var word = name_end;
     while word < stop {
-        let end = _word_end(tokens, word, stop);
+        let end = word_end(tokens, word, stop);
         let slot = params.first + params.count + hash.count;
         let key_start = tokens[word].start;
-        let equals = _hash_equals(tokens, word, end);
+        let equals = hash_equals(tokens, word, end);
         if equals != NONE {
-            let value, err = _arg_value(source, tokens, equals + 1, end, args);
-            guard _is_ok(err) else { return helper, params, hash, err; }
+            let value, err = arg_value(source, tokens, equals + 1, end, args);
+            guard is_ok(err) else { return helper, params, hash, err; }
             args[slot] = Arg { key: Span { start: key_start, len: tokens[equals].start - key_start }, value: value };
             hash.count += 1;
         } else {
-            guard hash.count == 0 else { return helper, params, hash, CallError { message: "positional argument after hash arguments: ", text: _tokens_text(source, tokens, word, end) }; }
-            let value, err = _arg_value(source, tokens, word, end, args);
-            guard _is_ok(err) else { return helper, params, hash, err; }
+            guard hash.count == 0 else { return helper, params, hash, CallError { message: "positional argument after hash arguments: ", text: tokens_text(source, tokens, word, end) }; }
+            let value, err = arg_value(source, tokens, word, end, args);
+            guard is_ok(err) else { return helper, params, hash, err; }
             args[slot] = Arg { key: Span { start: key_start, len: 0 }, value: value };
             params.count += 1;
         }
         word = end;
     }
     hash.first = params.first + params.count;
-    return helper, params, hash, _no_error();
+    return helper, params, hash, no_error();
 }
 
 // Whether arg is the literal true or false.
-fn _is_bool_literal(arg: Arg) -> bool {
+fn is_bool_literal(arg: Arg) -> bool {
     match arg.value {
         Bool => { return true; },
         _ => { return false; },
@@ -1178,7 +1178,7 @@ fn _is_bool_literal(arg: Arg) -> bool {
 }
 
 // Whether helper is one of the built-in blocks: with, each, if, unless.
-fn _is_built_in_block(helper: const u8[:]) -> bool {
+fn is_built_in_block(helper: const u8[:]) -> bool {
     return helper == "with" || helper == "each" || helper == "if" || helper == "unless";
 }
 
@@ -1188,7 +1188,7 @@ fn _is_built_in_block(helper: const u8[:]) -> bool {
 // which takes anything; whether it is registered is the render's to check,
 // since the block helpers are given to the render (see
 // _unknown_block_error). Returns the error, empty when the call holds.
-fn _check_call(source: const u8[:], helper: const u8[:], params: Range, hash: Range, args: const Arg[>..]&) -> u8[>..] {
+fn check_call(source: const u8[:], helper: const u8[:], params: Range, hash: Range, args: const Arg[>..]&) -> u8[>..] {
     if helper == "with" || helper == "each" {
         guard params.count == 1 else { return str("#", helper, " takes exactly one argument"); }
         guard hash.count == 0 else { return str("#", helper, " takes no hash arguments"); }
@@ -1197,10 +1197,10 @@ fn _check_call(source: const u8[:], helper: const u8[:], params: Range, hash: Ra
     if helper == "if" || helper == "unless" {
         guard params.count == 1 else { return str("#", helper, " takes exactly one argument"); }
         for i in hash.count {
-            let arg = _arg_at(args, hash, i);
-            let key = _span_text(source, arg.key);
+            let arg = arg_at(args, hash, i);
+            let key = span_text(source, arg.key);
             guard key == "includeZero" else { return str("#", helper, ": unknown hash argument ", key); }
-            guard _is_bool_literal(arg) else { return str("#", helper, ": includeZero must be true or false"); }
+            guard is_bool_literal(arg) else { return str("#", helper, ": includeZero must be true or false"); }
         }
         return [];
     }
@@ -1217,7 +1217,7 @@ fn _check_call(source: const u8[:], helper: const u8[:], params: Range, hash: Ra
 
 // The index of the "as" of a block's trailing as |a b|, NONE when it has
 // none (see _mark_block_params).
-fn _as_index(tokens: const TagToken[>..<]&) -> i64 {
+fn as_index(tokens: const TagToken[>..<]&) -> i64 {
     var i = tokens.len - 1;
     while i >= 0 && tokens[i].kind != TagTokenKind.As { i -= 1; }
     return i;
@@ -1225,21 +1225,21 @@ fn _as_index(tokens: const TagToken[>..<]&) -> i64 {
 
 // Whether a word of as |...|, tokens[from..to], can name a block
 // parameter: one plain name, no dots.
-fn _is_param_name(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> bool {
-    guard to - from == 1 && _is_segment(tokens[from]) else { return false; }
+fn is_param_name(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> bool {
+    guard to - from == 1 && is_segment(tokens[from]) else { return false; }
     return source[tokens[from].start] != '[';
 }
 
 // Reads the names of as |a b|, whose "as" is tokens[as_at], onto names.
 // tag_end is where the tag's text ends. Returns their run, or an error
 // such as "invalid block parameter name: a.b".
-fn _parse_param_names(source: const u8[:], tokens: const TagToken[>..<]&, as_at: i64, tag_end: i64, names: Span[>..]&) -> Range, u8[>..] {
+fn parse_param_names(source: const u8[:], tokens: const TagToken[>..<]&, as_at: i64, tag_end: i64, names: Span[>..]&) -> Range, u8[>..] {
     var run = Range { first: names.len, count: 0 };
     let last = tokens.len - 1;
     var word = as_at + 2;
     while word < last {
-        let end = _name_end(tokens, word, last);
-        guard _is_param_name(source, tokens, word, end) else { return run, str("invalid block parameter name: ", _tokens_text(source, tokens, word, end)); }
+        let end = name_end(tokens, word, last);
+        guard is_param_name(source, tokens, word, end) else { return run, str("invalid block parameter name: ", tokens_text(source, tokens, word, end)); }
         names.push(Span { start: tokens[word].start, len: tokens[word].end - tokens[word].start });
         run.count += 1;
         word = end;
@@ -1249,9 +1249,9 @@ fn _parse_param_names(source: const u8[:], tokens: const TagToken[>..<]&, as_at:
 }
 
 // The position of name among the names of run, or NONE.
-fn _slot_of(source: const u8[:], names: const Span[>..]&, run: Range, name: const u8[:]) -> i64 {
+fn slot_of(source: const u8[:], names: const Span[>..]&, run: Range, name: const u8[:]) -> i64 {
     for i in run.count {
-        if _span_text(source, names[run.first + i]) == name { return i; }
+        if span_text(source, names[run.first + i]) == name { return i; }
     }
     return NONE;
 }
@@ -1260,9 +1260,9 @@ fn _slot_of(source: const u8[:], names: const Span[>..]&, run: Range, name: cons
 // blocks. A path that starts with ../, ./ or this, or a data variable, is
 // never one, as in handlebars.js. A block walking its inverse has no
 // parameters there.
-fn _param_ref(source: const u8[:], path: const u8[:], open: const OpenBlock[>..<]&, names: const Span[>..]&) -> ParamRef {
-    let taken, climbs = _navigation_step(path);
-    guard taken == 0 && !starts_with(path, "@") else { return _no_param_ref(); }
+fn param_ref(source: const u8[:], path: const u8[:], open: const OpenBlock[>..<]&, names: const Span[>..]&) -> ParamRef {
+    let taken, climbs = navigation_step(path);
+    guard taken == 0 && !starts_with(path, "@") else { return no_param_ref(); }
     let dot = find(path, ".");
     let head = if dot >= 0 { path[..dot] } else { path };
     var up: i64 = 0;
@@ -1270,23 +1270,23 @@ fn _param_ref(source: const u8[:], path: const u8[:], open: const OpenBlock[>..<
     while at > 0 {
         let candidate = open[at];
         if candidate.names.count > 0 && !candidate.in_inverse {
-            let slot = _slot_of(source, names, candidate.names, head);
+            let slot = slot_of(source, names, candidate.names, head);
             if slot != NONE { return ParamRef { up: up, slot: slot }; }
             up += 1;
         }
         at -= 1;
     }
-    return _no_param_ref();
+    return no_param_ref();
 }
 
 // Ties every path among args[from..] to its block parameter, if any: the
 // arguments of the call just parsed, its subexpressions' included.
-fn _bind_arg_paths(source: const u8[:], args: Arg[>..]&, from: i64, open: const OpenBlock[>..<]&, names: const Span[>..]&) {
+fn bind_arg_paths(source: const u8[:], args: Arg[>..]&, from: i64, open: const OpenBlock[>..<]&, names: const Span[>..]&) {
     var i = from;
     while i < args.len {
         match args[i].value {
             Path p => {
-                let param_ref = _param_ref(source, _span_text(source, p.path), open, names);
+                let param_ref = param_ref(source, span_text(source, p.path), open, names);
                 args[i].value = ArgValue.Path { path: p.path, param_ref: param_ref };
             },
             _ => {},
@@ -1297,7 +1297,7 @@ fn _bind_arg_paths(source: const u8[:], args: Arg[>..]&, from: i64, open: const 
 
 // The helpers whose blocks take block parameters: each, with, and the
 // user's block helpers. if and unless walk no new context to name.
-fn _takes_block_params(helper: const u8[:]) -> bool {
+fn takes_block_params(helper: const u8[:]) -> bool {
     return helper != "if" && helper != "unless";
 }
 
@@ -1305,35 +1305,35 @@ fn _takes_block_params(helper: const u8[:]) -> bool {
 // ends at tag_end ("with person" for {{#with person}}), checks it, and
 // adds its Block node to the innermost open block. Returns the node's
 // index and the run of block parameter names it declares, or an error.
-fn _parse_block(source: const u8[:], tokens: const TagToken[>..<]&, tag_end: i64, nodes: Node[>..]&, roots: i64[>..]&, open: OpenBlock[>..<]&, args: Arg[>..]&, names: Span[>..]&) -> i64, Range, u8[>..] {
-    let as_at = _as_index(tokens);
+fn parse_block(source: const u8[:], tokens: const TagToken[>..<]&, tag_end: i64, nodes: Node[>..]&, roots: i64[>..]&, open: OpenBlock[>..<]&, args: Arg[>..]&, names: Span[>..]&) -> i64, Range, u8[>..] {
+    let as_at = as_index(tokens);
     let call_stop = if as_at == NONE { tokens.len } else { as_at };
     let call_end = if as_at == NONE { tag_end } else { tokens[as_at].start };
     let mark = args.len;
     var declared = Range { first: names.len, count: 0 };
-    let helper, params, hash, err = _parse_call(source, tokens, 0, call_stop, call_end, args);
-    guard _is_ok(err) else { return NONE, declared, _error_text(err); }
-    let name = _span_text(source, helper);
-    let call_err = _check_call(source, name, params, hash, args);
+    let helper, params, hash, err = parse_call(source, tokens, 0, call_stop, call_end, args);
+    guard is_ok(err) else { return NONE, declared, error_text(err); }
+    let name = span_text(source, helper);
+    let call_err = check_call(source, name, params, hash, args);
     guard call_err.len == 0 else { return NONE, declared, call_err; }
-    _bind_arg_paths(source, args, mark, open, names);
+    bind_arg_paths(source, args, mark, open, names);
     if as_at != NONE {
-        guard _takes_block_params(name) else { return NONE, declared, str("#", name, " takes no block parameters"); }
-        let run, names_err = _parse_param_names(source, tokens, as_at, tag_end, names);
+        guard takes_block_params(name) else { return NONE, declared, str("#", name, " takes no block parameters"); }
+        let run, names_err = parse_param_names(source, tokens, as_at, tag_end, names);
         guard names_err.len == 0 else { return NONE, declared, names_err; }
         declared = run;
     }
-    var node = _node(NodeKind.Block, helper.start, helper.start + helper.len, false);
+    var node = node(NodeKind.Block, helper.start, helper.start + helper.len, false);
     node.params = params;
     node.hash = hash;
     node.block_params = declared.count;
-    return _add(nodes, roots, open, node), declared, [];
+    return add(nodes, roots, open, node), declared, [];
 }
 
 // Whether a mustache whose lexed body is tokens holds a helper call with
 // arguments, {{helper args}}, rather than a path: whether any token past
 // the first has whitespace before it.
-fn _is_call(tokens: const TagToken[>..<]&) -> bool {
+fn is_call(tokens: const TagToken[>..<]&) -> bool {
     var i: i64 = 1;
     while i < tokens.len {
         if tokens[i].spaced { return true; }
@@ -1346,9 +1346,9 @@ fn _is_call(tokens: const TagToken[>..<]&) -> bool {
 // instead: when path is one plain name, as handlebars.js decides. ./name,
 // this.name, ../name, dotted paths, data variables and block parameters
 // are always paths.
-fn _may_be_helper(source: const u8[:], tokens: const TagToken[>..<]&, param_ref: ParamRef) -> bool {
-    guard param_ref.up == NONE && tokens.len == 1 && _is_segment(tokens[0]) else { return false; }
-    let name = _token_text(source, tokens[0]);
+fn may_be_helper(source: const u8[:], tokens: const TagToken[>..<]&, param_ref: ParamRef) -> bool {
+    guard param_ref.up == NONE && tokens.len == 1 && is_segment(tokens[0]) else { return false; }
+    let name = token_text(source, tokens[0]);
     return name != "this" && name[0] != '[';
 }
 
@@ -1362,94 +1362,94 @@ fn _may_be_helper(source: const u8[:], tokens: const TagToken[>..<]&, param_ref:
 // HTML-escaped. Returns the error text, empty
 // when the parse holds.
 
-fn _parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots: i64[>..]&, args: Arg[>..]&) -> u8[>..] {
+fn parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots: i64[>..]&, args: Arg[>..]&) -> u8[>..] {
     let open: OpenBlock[>..<] = [];
     let names: Span[>..] = [];
     // The lexed body of the tag at hand, reused from tag to tag.
     let tag_tokens: TagToken[>..<] = [];
-    open.push(_open_block(NONE, Range { first: 0, count: 0 }));
+    open.push(open_block(NONE, Range { first: 0, count: 0 }));
     for token in tokens {
         match token.token_type {
             Comment => {},
             RawOpen => {
-                _lex_tag(source, token.start, token.end, tag_tokens);
-                let opener, declared, err = _parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
+                lex_tag(source, token.start, token.end, tag_tokens);
+                let opener, declared, err = parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
                 guard err.len == 0 else { return err; }
-                open.push(_open_block(opener, declared));
+                open.push(open_block(opener, declared));
             },
             RawClose => {
                 let helper = source[token.start..token.end];
-                guard _innermost_is(source, nodes, open, helper) else { return str("unexpected /", helper); }
-                open.resize(_chain_start(open));
+                guard innermost_is(source, nodes, open, helper) else { return str("unexpected /", helper); }
+                open.resize(chain_start(open));
             },
             Text => {
                 if token.end > token.start {
-                    _add(nodes, roots, open, _node(NodeKind.Text, token.start, token.end, false));
+                    add(nodes, roots, open, node(NodeKind.Text, token.start, token.end, false));
                 }
             },
             Expression => {
                 let word = source[token.start..token.end];
                 if token.tag == TagKind.Else {
-                    let inner .= _innermost(open);
+                    let inner .= innermost(open);
                     guard inner.opener != NONE && !inner.in_inverse else { return str("unexpected else"); }
                     inner.in_inverse = true;
                     inner.last = NONE;
                 } else if token.tag == TagKind.ElseChain {
                     // {{else helper args}}: the inverse holds one block,
                     // helper, which takes the rest up to the closing tag.
-                    let inner .= _innermost(open);
+                    let inner .= innermost(open);
                     guard inner.opener != NONE && !inner.in_inverse else { return str("unexpected else"); }
                     inner.in_inverse = true;
                     inner.last = NONE;
-                    _lex_tag(source, token.start + 4, token.end, tag_tokens);
-                    let opener, declared, err = _parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
+                    lex_tag(source, token.start + 4, token.end, tag_tokens);
+                    let opener, declared, err = parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
                     guard err.len == 0 else { return err; }
-                    var chained = _open_block(opener, declared);
+                    var chained = open_block(opener, declared);
                     chained.chained = true;
                     open.push(chained);
                 } else if token.tag == TagKind.Close {
                     let helper = trim(word[1..]);
-                    guard _innermost_is(source, nodes, open, helper) else { return str("unexpected /", helper); }
-                    open.resize(_chain_start(open));
+                    guard innermost_is(source, nodes, open, helper) else { return str("unexpected /", helper); }
+                    open.resize(chain_start(open));
                 } else if token.tag == TagKind.Open {
-                    _lex_tag(source, token.start + 1, token.end, tag_tokens);
-                    let opener, declared, err = _parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
+                    lex_tag(source, token.start + 1, token.end, tag_tokens);
+                    let opener, declared, err = parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
                     guard err.len == 0 else { return err; }
-                    open.push(_open_block(opener, declared));
+                    open.push(open_block(opener, declared));
                 } else {
                     // A mustache, {{helper args}} or {{path}}. {{^...}} is
                     // read as one too, and fails as a path.
-                    _lex_tag(source, token.start, token.end, tag_tokens);
-                    if _is_call(tag_tokens) {
+                    lex_tag(source, token.start, token.end, tag_tokens);
+                    if is_call(tag_tokens) {
                         let mark = args.len;
-                        let helper, params, hash, err = _parse_call(source, tag_tokens, 0, tag_tokens.len, token.end, args);
-                        guard _is_ok(err) else { return _error_text(err); }
-                        let name_err = _check_helper_name(source, tag_tokens, 0, tag_tokens.len, word);
-                        guard _is_ok(name_err) else { return _error_text(name_err); }
-                        _bind_arg_paths(source, args, mark, open, names);
-                        var node = _node(NodeKind.Call, helper.start, helper.start + helper.len, token.escaped);
+                        let helper, params, hash, err = parse_call(source, tag_tokens, 0, tag_tokens.len, token.end, args);
+                        guard is_ok(err) else { return error_text(err); }
+                        let name_err = check_helper_name(source, tag_tokens, 0, tag_tokens.len, word);
+                        guard is_ok(name_err) else { return error_text(name_err); }
+                        bind_arg_paths(source, args, mark, open, names);
+                        var node = node(NodeKind.Call, helper.start, helper.start + helper.len, token.escaped);
                         node.params = params;
                         node.hash = hash;
-                        _add(nodes, roots, open, node);
+                        add(nodes, roots, open, node);
                     } else {
-                        let why = _path_error(source, tag_tokens, 0, tag_tokens.len);
+                        let why = path_error(source, tag_tokens, 0, tag_tokens.len);
                         guard why.len == 0 else { return str(why); }
-                        var node = _node(NodeKind.Expression, token.start, token.end, token.escaped);
-                        node.param_ref = _param_ref(source, word, open, names);
-                        node.helper_first = _may_be_helper(source, tag_tokens, node.param_ref);
-                        _add(nodes, roots, open, node);
+                        var node = node(NodeKind.Expression, token.start, token.end, token.escaped);
+                        node.param_ref = param_ref(source, word, open, names);
+                        node.helper_first = may_be_helper(source, tag_tokens, node.param_ref);
+                        add(nodes, roots, open, node);
                     }
                 }
             },
         }
     }
-    let unclosed = open[_chain_start(open)].opener;
-    guard unclosed == NONE else { return str("unclosed #", _span_text(source, nodes[unclosed].value)); }
+    let unclosed = open[chain_start(open)].opener;
+    guard unclosed == NONE else { return str("unclosed #", span_text(source, nodes[unclosed].value)); }
     return [];
 }
 
 // Whether names, spans of text, holds name.
-fn _has_name(names: const Span[:], text: const u8[:], name: const u8[:]) -> bool {
+fn has_name(names: const Span[:], text: const u8[:], name: const u8[:]) -> bool {
     var i: i64 = 0;
     while i < names.len {
         let s = names[i];
@@ -1461,18 +1461,18 @@ fn _has_name(names: const Span[:], text: const u8[:], name: const u8[:]) -> bool
 
 // Adds the field names of the path at span: its dotted segments after the
 // leading ../ and ./ navigation, or after @root.
-fn _add_path_names(names: Span[>..]&, text: const u8[:], span: Span) {
+fn add_path_names(names: Span[>..]&, text: const u8[:], span: Span) {
     let path = text[span.start..span.start + span.len];
-    guard !_is_data_path(path) else { return; }
-    let rooted, after_root = _root_parts(path);
-    let body = if rooted { after_root } else { _strip_navigation(path) };
+    guard !is_data_path(path) else { return; }
+    let rooted, after_root = root_parts(path);
+    let body = if rooted { after_root } else { strip_navigation(path) };
     var at = span.start + path.len - body.len;
     let end = span.start + span.len;
     while at < end {
         var stop = at;
         while stop < end && text[stop] != '.' { stop += 1; }
         let head = text[at..stop];
-        if head.len > 0 && head != ".." && !_has_name(names, text, head) {
+        if head.len > 0 && head != ".." && !has_name(names, text, head) {
             names.push(Span { start: at, len: stop - at });
         }
         at = stop + 1;
@@ -1482,31 +1482,31 @@ fn _add_path_names(names: Span[>..]&, text: const u8[:], span: Span) {
 // Adds the key of a lookup call, (lookup target "key"), when it is a
 // string literal: it names a field as a path would. A key that is a path
 // or a subexpression is known only when rendering, and names nothing.
-fn _add_lookup_key_name(names: Span[>..]&, text: const u8[:], args: const Arg[>..]&, helper: Span, params: Range) {
-    guard _span_text(text, helper) == "lookup" && params.count == 2 else { return; }
-    match _arg_at(args, params, 1).value {
+fn add_lookup_key_name(names: Span[>..]&, text: const u8[:], args: const Arg[>..]&, helper: Span, params: Range) {
+    guard span_text(text, helper) == "lookup" && params.count == 2 else { return; }
+    match arg_at(args, params, 1).value {
         String key => {
-            if !_has_name(names, text, _span_text(text, key.text)) { names.push(key.text); }
+            if !has_name(names, text, span_text(text, key.text)) { names.push(key.text); }
         },
         _ => {},
     }
 }
 
 // An Engine that only carries error.
-fn _failed(error: const u8[:]) -> Engine {
+fn failed(error: const u8[:]) -> Engine {
     return Engine { nodes: [], roots: [], args: [], names: [], text: [], error: error };
 }
 
 // Tokenizes, parses and validates template, and returns the Engine for it.
 // prefix starts the error text, if any.
-fn _compile(template: const u8[:], prefix: const u8[:]) -> Engine {
-    let tokens, err = _tokenize(template);
-    guard err.len == 0 else { return _failed(str(prefix, err)); }
+fn compile(template: const u8[:], prefix: const u8[:]) -> Engine {
+    let tokens, err = tokenize(template);
+    guard err.len == 0 else { return failed(str(prefix, err)); }
     let nodes: Node[>..] = [];
     let roots: i64[>..] = [];
     let args: Arg[>..] = [];
-    let parse_err = _parse(template, tokens, nodes, roots, args);
-    guard parse_err.len == 0 else { return _failed(str(prefix, parse_err)); }
+    let parse_err = parse(template, tokens, nodes, roots, args);
+    guard parse_err.len == 0 else { return failed(str(prefix, parse_err)); }
 
     // The paths are those of the expressions and those among the
     // arguments, which hold every call's, subexpressions included. A
@@ -1514,15 +1514,15 @@ fn _compile(template: const u8[:], prefix: const u8[:]) -> Engine {
     let names: Span[>..] = [];
     for node in nodes {
         match node.kind {
-            Expression => { _add_path_names(names, template, node.value); },
-            Call => { _add_lookup_key_name(names, template, args, node.value, node.params); },
+            Expression => { add_path_names(names, template, node.value); },
+            Call => { add_lookup_key_name(names, template, args, node.value, node.params); },
             _ => {},
         }
     }
     for arg in args {
         match arg.value {
-            Path p => { _add_path_names(names, template, p.path); },
-            Call c => { _add_lookup_key_name(names, template, args, c.name, c.params); },
+            Path p => { add_path_names(names, template, p.path); },
+            Call c => { add_lookup_key_name(names, template, args, c.name, c.params); },
             _ => {},
         }
     }
@@ -1535,20 +1535,20 @@ fn _compile(template: const u8[:], prefix: const u8[:]) -> Engine {
 // helpers and block helpers are given to the render, not here: an Engine
 // cannot hold a function (spec §7.6).
 fn get_engine(template: const u8[:]) -> Engine {
-    return _compile(template, "");
+    return compile(template, "");
 }
 
 // Reads the template file at path and compiles it into an Engine. The
 // error, if any, is "cannot read template <path>" or "<path>: <parse error>".
 fn load_engine(path: const u8[:]) -> Engine {
     let source: u8[>..] = [];
-    guard read_file(path, source) else { return _failed(str("cannot read template ", path)); }
-    return _compile(source, str(path, ": "));
+    guard read_file(path, source) else { return failed(str("cannot read template ", path)); }
+    return compile(source, str(path, ": "));
 }
 
 // The field names engine's paths use, as slices of engine.text, for the
 // conversions below.
-fn _name_slices(engine: const Engine&, names: const u8[:][>..]&) {
+fn name_slices(engine: const Engine&, names: const u8[:][>..]&) {
     var i: i64 = 0;
     while i < engine.names.len {
         let s = engine.names[i];
@@ -1559,7 +1559,7 @@ fn _name_slices(engine: const Engine&, names: const u8[:][>..]&) {
 
 // Whether names holds name. The set is small, one entry per distinct
 // segment in the template, so a scan is enough.
-fn _wanted(names: const u8[:][>..]&, name: const u8[:]) -> bool {
+fn wanted(names: const u8[:][>..]&, name: const u8[:]) -> bool {
     var i: i64 = 0;
     while i < names.len {
         if names[i] == name { return true; }
@@ -1577,7 +1577,7 @@ fn _wanted(names: const u8[:][>..]&, name: const u8[:]) -> bool {
 // node by node, with only the fields the template uses.
 
 // Appends a node with no links yet and returns its index.
-fn _push_node(doc: json::Node[>..]&, key: const u8[:], val: json::Value) -> i64 {
+fn push_node(doc: json::Node[>..]&, key: const u8[:], val: json::Value) -> i64 {
     doc.push(json::Node { next: null, first: null, key: key, val: val });
     return doc.len - 1;
 }
@@ -1587,12 +1587,12 @@ fn _push_node(doc: json::Node[>..]&, key: const u8[:], val: json::Value) -> i64 
 struct Children { parent: i64, last: i64 }
 
 // No children yet for the container at parent.
-fn _children_of(parent: i64) -> Children {
+fn children_of(parent: i64) -> Children {
     return Children { parent: parent, last: NONE };
 }
 
 // Links child after the last of children, or as the container's first.
-fn _append_child(doc: json::Node[>..]&, children: Children&, child: i64) {
+fn append_child(doc: json::Node[>..]&, children: Children&, child: i64) {
     if children.last == NONE {
         doc[children.parent].first .= doc[child];
     } else {
@@ -1610,57 +1610,57 @@ fn _append_child(doc: json::Node[>..]&, children: Children&, child: i64) {
 //   because a struct reference would also bind a C? parameter;
 // - an optional takes an f64, the last resort, which only it reaches for an
 //   optional field, since an optional does not bind a C& parameter.
-fn _doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: const u8[:], rank: i32) -> i64 {
-    return _push_node(doc, key, json::Value.Str { s: value });
+fn doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: const u8[:], rank: i32) -> i64 {
+    return push_node(doc, key, json::Value.Str { s: value });
 }
 
-fn _doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: const u8[>..]&, rank: i32) -> i64 {
-    return _push_node(doc, key, json::Value.Str { s: value });
+fn doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: const u8[>..]&, rank: i32) -> i64 {
+    return push_node(doc, key, json::Value.Str { s: value });
 }
 
-fn _doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: i64, rank: i32) -> i64 {
-    return _push_node(doc, key, json::Value.Int { v: value });
+fn doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: i64, rank: i32) -> i64 {
+    return push_node(doc, key, json::Value.Int { v: value });
 }
 
-fn _doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: f64, rank: i32) -> i64 {
-    return _push_node(doc, key, json::Value.Num { v: value });
+fn doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: f64, rank: i32) -> i64 {
+    return push_node(doc, key, json::Value.Num { v: value });
 }
 
-fn _doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: f32, rank: i32) -> i64 {
-    return _push_node(doc, key, json::Value.Num { v: value });
+fn doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: f32, rank: i32) -> i64 {
+    return push_node(doc, key, json::Value.Num { v: value });
 }
 
-fn _doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: bool, rank: i32) -> i64 {
-    return _push_node(doc, key, json::Value.Bool { v: value });
+fn doc_value(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: bool, rank: i32) -> i64 {
+    return push_node(doc, key, json::Value.Bool { v: value });
 }
 
 // A slice becomes an array of its elements, converted the same way.
-fn _doc_value<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: const C[:], rank: i32) -> i64 {
-    return _doc_list(doc, names, key, value);
+fn doc_value<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: const C[:], rank: i32) -> i64 {
+    return doc_list(doc, names, key, value);
 }
 
 // A struct becomes an object of the fields the template uses.
-fn _doc_value<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: const C&, rank: i64) -> i64 {
-    return _doc_struct(doc, names, key, value);
+fn doc_value<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: const C&, rank: i64) -> i64 {
+    return doc_struct(doc, names, key, value);
 }
 
 // An optional is null when empty, else its value converted as a field of
 // that type would be.
-fn _doc_value<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: C?, rank: f64) -> i64 {
-    guard value else { return _push_node(doc, key, json::Value.Null); }
+fn doc_value<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: C?, rank: f64) -> i64 {
+    guard value else { return push_node(doc, key, json::Value.Null); }
     let inner_rank: i32 = 0;
-    return _doc_value(doc, names, key, value, inner_rank);
+    return doc_value(doc, names, key, value, inner_rank);
 }
 
 // An array node, then each element's node and subtree, linked in order.
 // Elements have no key and are never filtered; the fields of an element
 // that is a struct are.
-recursive fn _doc_list<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], items: const C[:]) -> i64 {
-    let index = _push_node(doc, key, json::Value.Arr { count: items.len });
-    var children = _children_of(index);
+recursive fn doc_list<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], items: const C[:]) -> i64 {
+    let index = push_node(doc, key, json::Value.Arr { count: items.len });
+    var children = children_of(index);
     let rank: i32 = 0;
     for &item in items {
-        _append_child(doc, children, _doc_value(doc, names, "", item, rank));
+        append_child(doc, children, doc_value(doc, names, "", item, rank));
     }
     return index;
 }
@@ -1670,14 +1670,14 @@ recursive fn _doc_list<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key: 
 // are never visited at run time; const for still checks the conversion of
 // every field type, so the specializations are one per type reachable from
 // the root.
-recursive fn _doc_struct<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: const C&) -> i64 {
-    let index = _push_node(doc, key, json::Value.Obj { count: 0 });
-    var children = _children_of(index);
+recursive fn doc_struct<C>(doc: json::Node[>..]&, names: const u8[:][>..]&, key: const u8[:], value: const C&) -> i64 {
+    let index = push_node(doc, key, json::Value.Obj { count: 0 });
+    var children = children_of(index);
     var count: i64 = 0;
     let rank: i32 = 0;
     const for <N, A> in fields<C> {
-        if _wanted(names, N) {
-            _append_child(doc, children, _doc_value(doc, names, N, value.A, rank));
+        if wanted(names, N) {
+            append_child(doc, children, doc_value(doc, names, N, value.A, rank));
             count += 1;
         }
     }
@@ -1796,7 +1796,7 @@ struct Registry {
 }
 
 // The resolved argument at position i of range.
-fn _resolved_at(cx: const HelperContext&, range: Range, i: i64) -> Resolved {
+fn resolved_at(cx: const HelperContext&, range: Range, i: i64) -> Resolved {
     return cx.resolved[range.first + i];
 }
 
@@ -1809,13 +1809,13 @@ fn param_count(cx: const HelperContext&) -> i64 {
 // as JavaScript's undefined.
 fn param(cx: const HelperContext&, i: i64) -> json::Value {
     guard i >= 0 && i < cx.params.count else { return json::Value.Null; }
-    return _resolved_at(cx, cx.params, i).value;
+    return resolved_at(cx, cx.params, i).value;
 }
 
 // The hash argument key=..., or Null when the call has none.
 fn hash_arg(cx: const HelperContext&, key: const u8[:]) -> json::Value {
     for i in cx.hash.count {
-        let entry = _resolved_at(cx, cx.hash, i);
+        let entry = resolved_at(cx, cx.hash, i);
         if entry.key == key { return entry.value; }
     }
     return json::Value.Null;
@@ -1831,24 +1831,24 @@ fn answer(cx: HelperContext&, value: json::Value) {
 // answers it with answer. While listing, gives name instead.
 inline fn helper<F>(reg: Registry&, name: const u8[:]) {
     if reg.listing {
-        _list_name(reg, name);
+        list_name(reg, name);
     } else if reg.call.name == name {
         F(&reg.call);
     }
 }
 
 // Knows no helper: what the render functions without helpers use.
-fn _no_helpers(reg) {}
+fn no_helpers(reg) {}
 
 // While listing, appends name to reg.call.text, one per line.
-fn _list_name(reg: Registry&, name: const u8[:]) {
+fn list_name(reg: Registry&, name: const u8[:]) {
     reg.call.text.append(name);
     reg.call.text.push('\n');
 }
 
 // Appends the names that the helpers F register to names, one per line: F
 // runs once on a listing Registry, where no registration runs its block.
-fn _helper_names<F>(names: u8[>..]&) {
+fn helper_names<F>(names: u8[>..]&) {
     let resolved: Resolved[>..<] = [];
     let none = Range { first: 0, count: 0 };
     let out: u8[>..] = [];
@@ -1858,7 +1858,7 @@ fn _helper_names<F>(names: u8[>..]&) {
 }
 
 // The first name that names, one per line, holds twice, or "".
-fn _first_duplicate(names: const u8[:]) -> const u8[:] {
+fn first_duplicate(names: const u8[:]) -> const u8[:] {
     let list = words(names);
     for i in list.len {
         for j in i {
@@ -1871,8 +1871,8 @@ fn _first_duplicate(names: const u8[:]) -> const u8[:] {
 // The error for a kind of helper ("helper" or "block helper") whose names,
 // one per line, hold one twice, such as duplicate helper "now"; empty when
 // each is there once.
-fn _duplicate_error(kind: const u8[:], names: const u8[:]) -> u8[>..] {
-    let twice = _first_duplicate(names);
+fn duplicate_error(kind: const u8[:], names: const u8[:]) -> u8[>..] {
+    let twice = first_duplicate(names);
     guard twice.len > 0 else { return []; }
     return str("duplicate ", kind, " \"", twice, "\"");
 }
@@ -1881,27 +1881,27 @@ fn _duplicate_error(kind: const u8[:], names: const u8[:]) -> u8[>..] {
 // block helpers G register each name once, and that every block of engine
 // that is not built in has a block helper in G. Returns the error, empty
 // when both hold.
-fn _registration_error<F, G>(engine: const Engine&) -> u8[>..] {
+fn registration_error<F, G>(engine: const Engine&) -> u8[>..] {
     let names: u8[>..] = [];
-    _helper_names(names, F);
-    let duplicate = _duplicate_error("helper", names);
+    helper_names(names, F);
+    let duplicate = duplicate_error("helper", names);
     guard duplicate.len == 0 else { return duplicate; }
     let block_names: u8[>..] = [];
-    _block_helper_names(block_names, G);
-    let block_duplicate = _duplicate_error("block helper", block_names);
+    block_helper_names(block_names, G);
+    let block_duplicate = duplicate_error("block helper", block_names);
     guard block_duplicate.len == 0 else { return block_duplicate; }
-    return _unknown_block_error(engine, block_names);
+    return unknown_block_error(engine, block_names);
 }
 
 // The error for the first block of engine whose helper is neither built in
 // nor among block_names, one per line, such as unknown block helper
 // "nope"; empty when there is none.
-fn _unknown_block_error(engine: const Engine&, block_names: const u8[:]) -> u8[>..] {
+fn unknown_block_error(engine: const Engine&, block_names: const u8[:]) -> u8[>..] {
     let known = words(block_names);
     for node in engine.nodes {
         guard node.kind == NodeKind.Block else { continue; }
-        let helper = _span_text(engine.text, node.value);
-        guard !_is_built_in_block(helper) && !_is_listed(known, helper) else { continue; }
+        let helper = span_text(engine.text, node.value);
+        guard !is_built_in_block(helper) && !_is_listed(known, helper) else { continue; }
         return str("unknown block helper \"", helper, "\"");
     }
     return [];
@@ -2022,7 +2022,7 @@ fn length(value: json::Value) -> i64 {
 
 // Appends text to out HTML-escaped, as {{value}} writes it.
 fn append_escaped(out: u8[>..]&, text: const u8[:]) {
-    _append_html_escaped(out, text);
+    append_html_escaped(out, text);
 }
 
 // Registers the block helper name: when the call is to name, runs F on
@@ -2030,7 +2030,7 @@ fn append_escaped(out: u8[>..]&, text: const u8[:]) {
 // call. While listing, gives name instead.
 inline fn block_helper<F>(reg: Registry&, name: const u8[:]) {
     if reg.listing {
-        _list_name(reg, name);
+        list_name(reg, name);
     } else if reg.call.name == name {
         F(&reg.call);
         reg.call.answered = true;
@@ -2038,14 +2038,14 @@ inline fn block_helper<F>(reg: Registry&, name: const u8[:]) {
 }
 
 // The block helpers of the render functions that take none.
-fn _no_block_helpers<B>(reg) {}
+fn no_block_helpers<B>(reg) {}
 
 // Appends the names of the block helpers that G registers to names, one
 // per line, as _helper_names does, with a B that walks nothing.
-fn _block_helper_names<G>(names: u8[>..]&) {
+fn block_helper_names<G>(names: u8[>..]&) {
     fn no_body(part: Body) -> bool { return false; }
     fn blocks(reg) { G(reg, no_body); }
-    _helper_names(names, blocks);
+    helper_names(names, blocks);
 }
 
 // ---------------------------------------------------------------------------
@@ -2092,11 +2092,11 @@ struct RenderContext {
 // node instead: the item or the target of the block that declares it. A
 // parameter that is no node, an each's @key, finds nothing. @root starts
 // from the first frame, the context the render began with.
-fn _lookup(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> const json::Node? {
-    guard !_is_data_path(path) else { return null; }
+fn lookup(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> const json::Node? {
+    guard !is_data_path(path) else { return null; }
     var rest = path;
     var frame = rc.stack.len - 1;
-    let rooted, after_root = _root_parts(path);
+    let rooted, after_root = root_parts(path);
     if rooted {
         frame = 0;
         rest = after_root;
@@ -2106,7 +2106,7 @@ fn _lookup(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> const 
         rest = _after_first_segment(path);
     }
     loop {
-        let taken, climbs = _navigation_step(rest);
+        let taken, climbs = navigation_step(rest);
         if taken == 0 { break; }
         rest = rest[taken..];
         if climbs { frame -= 1; }
@@ -2132,7 +2132,7 @@ fn _after_first_segment(path: const u8[:]) -> const u8[:] {
 // The value of the second block parameter of an each, its item's @key, when
 // path is that parameter alone; Null for anything else: a with has no
 // second parameter, and a key has no fields.
-fn _param_key(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> json::Value {
+fn param_key(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> json::Value {
     guard param_ref.slot == 1 && find(path, ".") < 0 else { return json::Value.Null; }
     return rc.params[rc.params.len - 1 - param_ref.up].key;
 }
@@ -2144,7 +2144,7 @@ fn _param_key(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> jso
 // json::format_number. Where JavaScript and it pick a different layout,
 // that layout is kept: it switches to an exponent from 1e16 where
 // JavaScript waits until 1e21.
-fn _format_float(out: u8[>..]&, v: f64) {
+fn format_float(out: u8[>..]&, v: f64) {
     if is_nan(v) { out.append("NaN"); return; }
     if is_inf(v) {
         if v < 0.0 { out.append("-Infinity"); } else { out.append("Infinity"); }
@@ -2169,13 +2169,13 @@ fn _format_float(out: u8[>..]&, v: f64) {
 // decimal, a Num as _format_float, a Bool true or false. Null, arrays and
 // objects write nothing: an object is a context, an array is for a future
 // each.
-fn _write_value(value: json::Value, escaped: bool, rc: RenderContext&) {
+fn write_value(value: json::Value, escaped: bool, rc: RenderContext&) {
     match value {
         Str t => {
-            if escaped { _append_html_escaped(rc.out, t.s); } else { rc.out.append(t.s); }
+            if escaped { append_html_escaped(rc.out, t.s); } else { rc.out.append(t.s); }
         },
         Int i => { format(rc.out, i.v); },
-        Num f => { _format_float(rc.out, f.v); },
+        Num f => { format_float(rc.out, f.v); },
         Bool b => {
             if b.v { rc.out.append("true"); } else { rc.out.append("false"); }
         },
@@ -2186,8 +2186,8 @@ fn _write_value(value: json::Value, escaped: bool, rc: RenderContext&) {
 // The value of a data variable: @index, @key, @first or @last of the
 // innermost {{#each}}, or of an enclosing one for each ../ (@../index).
 // Null when there is no such each.
-fn _data_value(path: const u8[:], rc: RenderContext&) -> json::Value {
-    let depth, name = _data_parts(path);
+fn data_value(path: const u8[:], rc: RenderContext&) -> json::Value {
+    let depth, name = data_parts(path);
     let level = rc.loops.len - 1 - depth;
     guard level >= 0 else { return json::Value.Null; }
     let current = rc.loops[level];
@@ -2199,30 +2199,30 @@ fn _data_value(path: const u8[:], rc: RenderContext&) -> json::Value {
 
 // The value path resolves to: a data variable's, a block parameter's, or
 // the context value the path finds, Null when it finds nothing.
-fn _path_value(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> json::Value {
-    if _is_data_path(path) { return _data_value(path, rc); }
-    if param_ref.up != NONE && param_ref.slot != 0 { return _param_key(path, param_ref, rc); }
-    let node = _lookup(path, param_ref, rc);
+fn path_value(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> json::Value {
+    if is_data_path(path) { return data_value(path, rc); }
+    if param_ref.up != NONE && param_ref.slot != 0 { return param_key(path, param_ref, rc); }
+    let node = lookup(path, param_ref, rc);
     guard node else { return json::Value.Null; }
     return node.val;
 }
 
 // Writes the value path resolves to, if any.
-fn _eval_expression(path: const u8[:], param_ref: ParamRef, escaped: bool, rc: RenderContext&) {
-    _write_value(_path_value(path, param_ref, rc), escaped, rc);
+fn eval_expression(path: const u8[:], param_ref: ParamRef, escaped: bool, rc: RenderContext&) {
+    write_value(path_value(path, param_ref, rc), escaped, rc);
 }
 
 // The param at position i of a Block node.
-fn _param(rc: RenderContext&, node: const Node&, i: i64) -> Arg {
-    return _arg_at(rc.engine.args, node.params, i);
+fn param(rc: RenderContext&, node: const Node&, i: i64) -> Arg {
+    return arg_at(rc.engine.args, node.params, i);
 }
 
 // Whether a Block node's hash sets key to the literal true. Compile time
 // made sure such a key holds a bool.
-fn _hash_flag(rc: RenderContext&, node: const Node&, key: const u8[:]) -> bool {
+fn hash_flag(rc: RenderContext&, node: const Node&, key: const u8[:]) -> bool {
     for i in node.hash.count {
-        let arg = _arg_at(rc.engine.args, node.hash, i);
-        if _span_text(rc.engine.text, arg.key) == key {
+        let arg = arg_at(rc.engine.args, node.hash, i);
+        if span_text(rc.engine.text, arg.key) == key {
             match arg.value {
                 Bool b => { return b.v; },
                 _ => {},
@@ -2234,7 +2234,7 @@ fn _hash_flag(rc: RenderContext&, node: const Node&, key: const u8[:]) -> bool {
 
 // Whether a number counts as true for {{#if}}: anything but NaN and zero
 // (-0 too), and zero as well under includeZero=true.
-fn _number_is_truthy(v: f64, include_zero: bool) -> bool {
+fn number_is_truthy(v: f64, include_zero: bool) -> bool {
     if is_nan(v) { return false; }
     if v == 0.0 { return include_zero; }
     return true;
@@ -2243,12 +2243,12 @@ fn _number_is_truthy(v: f64, include_zero: bool) -> bool {
 // Whether a value counts as true for {{#if}}, as in handlebars.js: null,
 // false, "", an empty array and zero are false (zero only without
 // includeZero=true); every object, the empty one included, is true.
-fn _value_is_truthy(value: json::Value, include_zero: bool) -> bool {
+fn value_is_truthy(value: json::Value, include_zero: bool) -> bool {
     match value {
         Null => { return false; },
         Bool b => { return b.v; },
         Int i => { return i.v != 0 || include_zero; },
-        Num f => { return _number_is_truthy(f.v, include_zero); },
+        Num f => { return number_is_truthy(f.v, include_zero); },
         Str t => { return t.s.len > 0; },
         Arr a => { return a.count > 0; },
         Obj => { return true; },
@@ -2257,35 +2257,35 @@ fn _value_is_truthy(value: json::Value, include_zero: bool) -> bool {
 
 // The value of a helper argument: a path's context value (Null when it
 // finds nothing), a literal's own, a subexpression's result.
-recursive fn _resolve<F>(arg: Arg, rc: RenderContext&) -> json::Value {
+recursive fn resolve<F>(arg: Arg, rc: RenderContext&) -> json::Value {
     match arg.value {
-        Path p => { return _path_value(_span_text(rc.engine.text, p.path), p.param_ref, rc); },
-        Call c => { return _call_value(c.name, c.params, c.hash, rc, F); },
+        Path p => { return path_value(span_text(rc.engine.text, p.path), p.param_ref, rc); },
+        Call c => { return call_value(c.name, c.params, c.hash, rc, F); },
         Int n => { return json::Value.Int { v: n.v }; },
         Number n => { return json::Value.Num { v: n.v }; },
         Bool b => { return json::Value.Bool { v: b.v }; },
-        String t => { return json::Value.Str { s: _span_text(rc.engine.text, t.text) }; },
+        String t => { return json::Value.Str { s: span_text(rc.engine.text, t.text) }; },
         Null => { return json::Value.Null; },
     }
 }
 
 // Pushes the resolved values of the arguments in range, keyed as they are.
-recursive fn _push_resolved<F>(range: Range, rc: RenderContext&) {
+recursive fn push_resolved<F>(range: Range, rc: RenderContext&) {
     for i in range.count {
-        let arg = _arg_at(rc.engine.args, range, i);
-        let value = _resolve(arg, rc, F);
-        rc.resolved.push(Resolved { key: _span_text(rc.engine.text, arg.key), value: value });
+        let arg = arg_at(rc.engine.args, range, i);
+        let value = resolve(arg, rc, F);
+        rc.resolved.push(Resolved { key: span_text(rc.engine.text, arg.key), value: value });
     }
 }
 
 // Calls the helper name of F with params and hash resolved, innermost
 // subexpressions first, and returns its value: Null when F does not answer.
 // The arguments are popped once the helper has run.
-recursive fn _call_helper<F>(name: Span, params: Range, hash: Range, rc: RenderContext&) -> json::Value {
+recursive fn call_helper<F>(name: Span, params: Range, hash: Range, rc: RenderContext&) -> json::Value {
     let mark = rc.resolved.len;
-    _push_resolved(params, rc, F);
-    _push_resolved(hash, rc, F);
-    _start_call(rc, name, Range { first: mark, count: params.count }, Range { first: mark + params.count, count: hash.count });
+    push_resolved(params, rc, F);
+    push_resolved(hash, rc, F);
+    start_call(rc, name, Range { first: mark, count: params.count }, Range { first: mark + params.count, count: hash.count });
     F(&rc.registry);
     rc.resolved.resize(mark);
     return rc.registry.call.value;
@@ -2293,8 +2293,8 @@ recursive fn _call_helper<F>(name: Span, params: Range, hash: Range, rc: RenderC
 
 // Readies rc.registry.call for a call to the helper name with params and
 // hash: unanswered, with a Null value.
-fn _start_call(rc: RenderContext&, name: Span, params: Range, hash: Range) {
-    rc.registry.call.name = _span_text(rc.engine.text, name);
+fn start_call(rc: RenderContext&, name: Span, params: Range, hash: Range) {
+    rc.registry.call.name = span_text(rc.engine.text, name);
     rc.registry.call.params = params;
     rc.registry.call.hash = hash;
     rc.registry.call.value = json::Value.Null;
@@ -2304,24 +2304,24 @@ fn _start_call(rc: RenderContext&, name: Span, params: Range, hash: Range) {
 // Calls the helper name of F with no arguments, for a bare {{name}}, and
 // returns whether F answered, with its value in rc.registry.call.value.
 // lookup without arguments answers Null.
-fn _bare_helper<F>(name: Span, rc: RenderContext&) -> bool {
+fn bare_helper<F>(name: Span, rc: RenderContext&) -> bool {
     let none = Range { first: rc.resolved.len, count: 0 };
-    _start_call(rc, name, none, none);
-    guard !_is_lookup(rc, name) else { return true; }
+    start_call(rc, name, none, none);
+    guard !is_lookup(rc, name) else { return true; }
     F(&rc.registry);
     return rc.registry.call.answered;
 }
 
 // Whether a call is to the built-in lookup.
-fn _is_lookup(rc: RenderContext&, name: Span) -> bool {
-    return _span_text(rc.engine.text, name) == "lookup";
+fn is_lookup(rc: RenderContext&, name: Span) -> bool {
+    return span_text(rc.engine.text, name) == "lookup";
 }
 
 // The value of a call: lookup's node's value (Null when it finds nothing),
 // or else what the user's helpers give.
-recursive fn _call_value<F>(name: Span, params: Range, hash: Range, rc: RenderContext&) -> json::Value {
-    guard _is_lookup(rc, name) else { return _call_helper(name, params, hash, rc, F); }
-    let found = _lookup_node(params, rc, F);
+recursive fn call_value<F>(name: Span, params: Range, hash: Range, rc: RenderContext&) -> json::Value {
+    guard is_lookup(rc, name) else { return call_helper(name, params, hash, rc, F); }
+    let found = lookup_node(params, rc, F);
     guard found else { return json::Value.Null; }
     return found.val;
 }
@@ -2329,12 +2329,12 @@ recursive fn _call_value<F>(name: Span, params: Range, hash: Range, rc: RenderCo
 // The context node an argument stands for: what a path finds, or what a
 // lookup call finds. null for anything else: a literal, a data variable,
 // a user helper's call, whose result is a scalar, or nothing found.
-recursive fn _resolve_node<F>(arg: Arg, rc: RenderContext&) -> const json::Node? {
+recursive fn resolve_node<F>(arg: Arg, rc: RenderContext&) -> const json::Node? {
     match arg.value {
-        Path p => { return _lookup(_span_text(rc.engine.text, p.path), p.param_ref, rc); },
+        Path p => { return lookup(span_text(rc.engine.text, p.path), p.param_ref, rc); },
         Call c => {
-            guard _is_lookup(rc, c.name) else { return null; }
-            return _lookup_node(c.params, rc, F);
+            guard is_lookup(rc, c.name) else { return null; }
+            return lookup_node(c.params, rc, F);
         },
         _ => { return null; },
     }
@@ -2346,27 +2346,27 @@ recursive fn _resolve_node<F>(arg: Arg, rc: RenderContext&) -> const json::Node?
 // included. null when the call does not have exactly those two params,
 // when target finds nothing or a scalar, or when key finds no member or
 // element, as handlebars.js gives undefined.
-recursive fn _lookup_node<F>(params: Range, rc: RenderContext&) -> const json::Node? {
+recursive fn lookup_node<F>(params: Range, rc: RenderContext&) -> const json::Node? {
     guard params.count == 2 else { return null; }
-    let target = _resolve_node(_arg_at(rc.engine.args, params, 0), rc, F);
+    let target = resolve_node(arg_at(rc.engine.args, params, 0), rc, F);
     guard target else { return null; }
-    let key = _resolve(_arg_at(rc.engine.args, params, 1), rc, F);
+    let key = resolve(arg_at(rc.engine.args, params, 1), rc, F);
     match target.val {
-        Obj => { return _member_by_key(target, key); },
-        Arr => { return _element_at(target, _key_index(key)); },
+        Obj => { return member_by_key(target, key); },
+        Arr => { return element_at(target, key_index(key)); },
         _ => { return null; },
     }
 }
 
 // The member of object keyed key: a string names it, and an integer
 // names it in decimal ({"1": ...}). null for any other key.
-fn _member_by_key(object: const json::Node&, key: json::Value) -> const json::Node? {
+fn member_by_key(object: const json::Node&, key: json::Value) -> const json::Node? {
     match key {
         Str s => { return json::member(object, s.s); },
         Int i => {
             var member: const json::Node? = object.first;
             while member {
-                if _is_decimal(member.key, i.v) { return member; }
+                if is_decimal(member.key, i.v) { return member; }
                 member .= member.next;
             }
             return null;
@@ -2376,19 +2376,19 @@ fn _member_by_key(object: const json::Node&, key: json::Value) -> const json::No
 }
 
 // Whether text is the decimal form of n, as JavaScript's String(n).
-fn _is_decimal(text: const u8[:], n: i64) -> bool {
+fn is_decimal(text: const u8[:], n: i64) -> bool {
     let number = json::scan_number(text, 0);
     return number.end == text.len && number.is_int && number.int == n && !starts_with(text, "-0") && (text.len == 1 || text[0] != '0');
 }
 
 // The array position a key stands for: an integer, or a string holding
 // one in decimal ("1"). -1 for anything else.
-fn _key_index(key: json::Value) -> i64 {
+fn key_index(key: json::Value) -> i64 {
     match key {
         Int i => { return i.v; },
         Str s => {
             let number = json::scan_number(s.s, 0);
-            if number.end == s.s.len && number.is_int && _is_decimal(s.s, number.int) { return number.int; }
+            if number.end == s.s.len && number.is_int && is_decimal(s.s, number.int) { return number.int; }
             return -1;
         },
         _ => { return -1; },
@@ -2396,7 +2396,7 @@ fn _key_index(key: json::Value) -> i64 {
 }
 
 // The element of array at index, or null when there is none.
-fn _element_at(array: const json::Node&, index: i64) -> const json::Node? {
+fn element_at(array: const json::Node&, index: i64) -> const json::Node? {
     guard index >= 0 else { return null; }
     var element: const json::Node? = array.first;
     var at: i64 = 0;
@@ -2409,19 +2409,19 @@ fn _element_at(array: const json::Node&, index: i64) -> const json::Node? {
 
 // The context node a block's only param finds: a path's or a lookup's
 // (see _resolve_node).
-recursive fn _block_target<F>(node: const Node&, rc: RenderContext&) -> const json::Node? {
-    return _resolve_node(_param(rc, node, 0), rc, F);
+recursive fn block_target<F>(node: const Node&, rc: RenderContext&) -> const json::Node? {
+    return resolve_node(param(rc, node, 0), rc, F);
 }
 
 // Walks the chain at index, if there is one: a block's body or inverse.
-recursive fn _evaluate_chain<F, G>(index: i64, rc: RenderContext&) {
-    if index != NONE { _evaluate_node(index, rc, F, G); }
+recursive fn evaluate_chain<F, G>(index: i64, rc: RenderContext&) {
+    if index != NONE { evaluate_node(index, rc, F, G); }
 }
 
 // Makes the block parameters of node, if it declares any, readable in its
 // body: the context pushed at frame, and key. The caller pops them, back to
 // rc.params.len before the call.
-fn _push_params(node: const Node&, frame: i64, key: json::Value, rc: RenderContext&) {
+fn push_params(node: const Node&, frame: i64, key: json::Value, rc: RenderContext&) {
     if node.block_params > 0 { rc.params.push(ParamFrame { frame: frame, key: key }); }
 }
 
@@ -2429,17 +2429,17 @@ fn _push_params(node: const Node&, frame: i64, key: json::Value, rc: RenderConte
 // the frame the with was written in, walks the body there, and pops it.
 // Anything else walks the inverse, the part after {{else}}, on the same
 // frame. {{#with path as |p|}} also names the object p.
-recursive fn _eval_with<F, G>(node: const Node&, rc: RenderContext&) {
-    let found = _block_target(node, rc, F);
-    guard found && _is_object(found) else {
-        _evaluate_chain(node.inverse, rc, F, G);
+recursive fn eval_with<F, G>(node: const Node&, rc: RenderContext&) {
+    let found = block_target(node, rc, F);
+    guard found && is_object(found) else {
+        evaluate_chain(node.inverse, rc, F, G);
         return;
     }
     let mark = rc.stack.len;
     let params_mark = rc.params.len;
     rc.stack.push(found);
-    _push_params(node, mark, json::Value.Null, rc);
-    _evaluate_chain(node.body, rc, F, G);
+    push_params(node, mark, json::Value.Null, rc);
+    evaluate_chain(node.body, rc, F, G);
     rc.params.resize(params_mark);
     rc.stack.resize(mark);
 }
@@ -2447,18 +2447,18 @@ recursive fn _eval_with<F, G>(node: const Node&, rc: RenderContext&) {
 // {{#if value includeZero=...}}: walks the body on the same frame when
 // value is truthy, and the inverse otherwise. {{#unless ...}} is the same
 // with unless set: it walks the body when value is falsy.
-recursive fn _eval_if<F, G>(node: const Node&, rc: RenderContext&, unless: bool) {
-    let include_zero = _hash_flag(rc, node, "includeZero");
-    let value = _resolve(_param(rc, node, 0), rc, F);
-    if _value_is_truthy(value, include_zero) != unless {
-        _evaluate_chain(node.body, rc, F, G);
+recursive fn eval_if<F, G>(node: const Node&, rc: RenderContext&, unless: bool) {
+    let include_zero = hash_flag(rc, node, "includeZero");
+    let value = resolve(param(rc, node, 0), rc, F);
+    if value_is_truthy(value, include_zero) != unless {
+        evaluate_chain(node.body, rc, F, G);
     } else {
-        _evaluate_chain(node.inverse, rc, F, G);
+        evaluate_chain(node.inverse, rc, F, G);
     }
 }
 
 // Whether a context node is an object.
-fn _is_object(found: const json::Node&) -> bool {
+fn is_object(found: const json::Node&) -> bool {
     match found.val {
         Obj => { return true; },
         _ => { return false; },
@@ -2467,7 +2467,7 @@ fn _is_object(found: const json::Node&) -> bool {
 
 // How many items an each can walk in a context node: an array's elements
 // or an object's members. 0 for anything else.
-fn _item_count(found: const json::Node&) -> i64 {
+fn item_count(found: const json::Node&) -> i64 {
     match found.val {
         Arr a => { return a.count; },
         Obj o => { return o.count; },
@@ -2476,7 +2476,7 @@ fn _item_count(found: const json::Node&) -> i64 {
 }
 
 // The @key of an item: an object member's key, or else the item's position.
-fn _item_key(item: const json::Node&, index: i64, in_object: bool) -> json::Value {
+fn item_key(item: const json::Node&, index: i64, in_object: bool) -> json::Value {
     if in_object { return json::Value.Str { s: item.key }; }
     return json::Value.Int { v: index };
 }
@@ -2488,25 +2488,25 @@ fn _item_key(item: const json::Node&, index: i64, in_object: bool) -> json::Valu
 // name, a literal or a user helper's subexpression) walks the inverse
 // instead, on the same frame. {{#each path as |item key|}} also names the
 // item and its @key.
-recursive fn _eval_each<F, G>(node: const Node&, rc: RenderContext&) {
-    let found = _block_target(node, rc, F);
-    guard found && _item_count(found) > 0 else {
-        _evaluate_chain(node.inverse, rc, F, G);
+recursive fn eval_each<F, G>(node: const Node&, rc: RenderContext&) {
+    let found = block_target(node, rc, F);
+    guard found && item_count(found) > 0 else {
+        evaluate_chain(node.inverse, rc, F, G);
         return;
     }
-    let count = _item_count(found);
-    let in_object = _is_object(found);
+    let count = item_count(found);
+    let in_object = is_object(found);
     let mark = rc.stack.len;
     let loop_mark = rc.loops.len;
     let params_mark = rc.params.len;
     var index: i64 = 0;
     var item = found.first;
     while item {
-        let key = _item_key(item, index, in_object);
+        let key = item_key(item, index, in_object);
         rc.loops.push(Loop { index: index, count: count, key: key });
         rc.stack.push(item);
-        _push_params(node, mark, key, rc);
-        _evaluate_chain(node.body, rc, F, G);
+        push_params(node, mark, key, rc);
+        evaluate_chain(node.body, rc, F, G);
         rc.params.resize(params_mark);
         rc.stack.resize(mark);
         rc.loops.resize(loop_mark);
@@ -2521,35 +2521,35 @@ recursive fn _eval_each<F, G>(node: const Node&, rc: RenderContext&) {
 // inverse, also gets the block parameters. Returns false, walking nothing,
 // when the context is not there: a param past the last, one that finds no
 // node, an element past the end.
-recursive fn _walk_body<F, G>(node: const Node&, body: Body, rc: RenderContext&) -> bool {
+recursive fn walk_body<F, G>(node: const Node&, body: Body, rc: RenderContext&) -> bool {
     let chain = if body.inverse { node.inverse } else { node.body };
     let frame_mark = rc.stack.len;
     let loop_mark = rc.loops.len;
     let params_mark = rc.params.len;
     match body.context {
         This => {
-            if !body.inverse { _push_params(node, frame_mark - 1, json::Value.Null, rc); }
+            if !body.inverse { push_params(node, frame_mark - 1, json::Value.Null, rc); }
         },
         Param => {
             guard body.param >= 0 && body.param < node.params.count else { return false; }
-            let found = _resolve_node(_param(rc, node, body.param), rc, F);
+            let found = resolve_node(param(rc, node, body.param), rc, F);
             guard found else { return false; }
             rc.stack.push(found);
-            if !body.inverse { _push_params(node, frame_mark, json::Value.Null, rc); }
+            if !body.inverse { push_params(node, frame_mark, json::Value.Null, rc); }
         },
         Element => {
             guard body.param >= 0 && body.param < node.params.count else { return false; }
-            let found = _resolve_node(_param(rc, node, body.param), rc, F);
+            let found = resolve_node(param(rc, node, body.param), rc, F);
             guard found else { return false; }
-            let item = _element_at(found, body.index);
+            let item = element_at(found, body.index);
             guard item else { return false; }
-            let key = _item_key(item, body.index, _is_object(found));
-            rc.loops.push(Loop { index: body.index, count: _item_count(found), key: key });
+            let key = item_key(item, body.index, is_object(found));
+            rc.loops.push(Loop { index: body.index, count: item_count(found), key: key });
             rc.stack.push(item);
-            if !body.inverse { _push_params(node, frame_mark, key, rc); }
+            if !body.inverse { push_params(node, frame_mark, key, rc); }
         },
     }
-    _evaluate_chain(chain, rc, F, G);
+    evaluate_chain(chain, rc, F, G);
     rc.params.resize(params_mark);
     rc.loops.resize(loop_mark);
     rc.stack.resize(frame_mark);
@@ -2560,15 +2560,15 @@ recursive fn _walk_body<F, G>(node: const Node&, body: Body, rc: RenderContext&)
 // rc.registry filled in for the call (the body's own calls reuse
 // rc.registry) and body, the B of the description under Block helpers.
 // The arguments are popped once G returns.
-recursive fn _eval_user_block<F, G>(node: const Node&, rc: RenderContext&) {
+recursive fn eval_user_block<F, G>(node: const Node&, rc: RenderContext&) {
     fn body(part: Body) -> bool {
-        return _walk_body(node, part, rc, F, G);
+        return walk_body(node, part, rc, F, G);
     }
     let mark = rc.resolved.len;
-    _push_resolved(node.params, rc, F);
-    _push_resolved(node.hash, rc, F);
+    push_resolved(node.params, rc, F);
+    push_resolved(node.hash, rc, F);
     var reg = rc.registry;
-    reg.call.name = _span_text(rc.engine.text, node.value);
+    reg.call.name = span_text(rc.engine.text, node.value);
     reg.call.params = Range { first: mark, count: node.params.count };
     reg.call.hash = Range { first: mark + node.params.count, count: node.hash.count };
     reg.call.answered = false;
@@ -2578,18 +2578,18 @@ recursive fn _eval_user_block<F, G>(node: const Node&, rc: RenderContext&) {
 
 // Runs a Block node's helper: a built-in one, or else a user block helper,
 // which _unknown_block_error found registered before the render began.
-recursive fn _eval_block<F, G>(node: const Node&, rc: RenderContext&) {
-    let helper = _span_text(rc.engine.text, node.value);
+recursive fn eval_block<F, G>(node: const Node&, rc: RenderContext&) {
+    let helper = span_text(rc.engine.text, node.value);
     if helper == "with" {
-        _eval_with(node, rc, F, G);
+        eval_with(node, rc, F, G);
     } else if helper == "if" {
-        _eval_if(node, rc, false, F, G);
+        eval_if(node, rc, false, F, G);
     } else if helper == "unless" {
-        _eval_if(node, rc, true, F, G);
+        eval_if(node, rc, true, F, G);
     } else if helper == "each" {
-        _eval_each(node, rc, F, G);
+        eval_each(node, rc, F, G);
     } else {
-        _eval_user_block(node, rc, F, G);
+        eval_user_block(node, rc, F, G);
     }
 }
 
@@ -2599,35 +2599,35 @@ recursive fn _eval_block<F, G>(node: const Node&, rc: RenderContext&) {
 // and each on a pushed frame, if on this one) or its inverse; the nodes
 // after the block stay on the frame that reached it. Its only type parameter is the helpers: one
 // specialization for every context.
-recursive fn _evaluate_node<F, G>(index: i64, rc: RenderContext&) {
+recursive fn evaluate_node<F, G>(index: i64, rc: RenderContext&) {
     let node = rc.engine.nodes[index];
-    let value = _span_text(rc.engine.text, node.value);
+    let value = span_text(rc.engine.text, node.value);
     match node.kind {
         Text => { rc.out.append(value); },
         Expression => {
             if node.helper_first {
-                if _bare_helper(node.value, rc, F) {
-                    _write_value(rc.registry.call.value, node.escaped, rc);
+                if bare_helper(node.value, rc, F) {
+                    write_value(rc.registry.call.value, node.escaped, rc);
                 } else {
-                    _eval_expression(value, node.param_ref, node.escaped, rc);
+                    eval_expression(value, node.param_ref, node.escaped, rc);
                 }
             } else {
-                _eval_expression(value, node.param_ref, node.escaped, rc);
+                eval_expression(value, node.param_ref, node.escaped, rc);
             }
         },
         Call => {
-            let result = _call_value(node.value, node.params, node.hash, rc, F);
-            _write_value(result, node.escaped, rc);
+            let result = call_value(node.value, node.params, node.hash, rc, F);
+            write_value(result, node.escaped, rc);
         },
-        Block => { _eval_block(node, rc, F, G); },
+        Block => { eval_block(node, rc, F, G); },
     }
-    if node.next != NONE { _evaluate_node(node.next, rc, F, G); }
+    if node.next != NONE { evaluate_node(node.next, rc, F, G); }
 }
 
 // Walks each root of engine over doc, with the document's root, node 0, as
 // the first frame. Each root is its own chain; the parser links next only
 // inside a block.
-fn _evaluate<F, G>(engine: const Engine&, doc: const json::Node[>..]&, out: u8[>..]&) {
+fn evaluate<F, G>(engine: const Engine&, doc: const json::Node[>..]&, out: u8[>..]&) {
     let stack: const json::Node&[>..<] = [];
     stack.push(doc[0]);
     let loops: Loop[>..<] = [];
@@ -2640,7 +2640,7 @@ fn _evaluate<F, G>(engine: const Engine&, doc: const json::Node[>..]&, out: u8[>
     let rc = RenderContext { out: out, stack: stack, engine: engine, loops: loops, params: params, resolved: resolved, registry: registry };
     var index: i64 = 0;
     while index < engine.roots.len {
-        _evaluate_node(engine.roots[index], rc, F, G);
+        evaluate_node(engine.roots[index], rc, F, G);
         index += 1;
     }
 }
@@ -2651,26 +2651,26 @@ fn _evaluate<F, G>(engine: const Engine&, doc: const json::Node[>..]&, out: u8[>
 // holds: engine.error, or a helper registered twice, such as duplicate
 // helper "now". On an error out is left as it was and the count is 0.
 fn render_into<T>(engine: const Engine&, context: const T&, out: u8[>..]&) -> i64, u8[>..] {
-    return render_into(engine, context, out, _no_helpers);
+    return render_into(engine, context, out, no_helpers);
 }
 
 // render_into with helpers: F is the user's helpers, as described under
 // Helpers above.
 fn render_into<T, F>(engine: const Engine&, context: const T&, out: u8[>..]&) -> i64, u8[>..] {
-    return render_into(engine, context, out, F, _no_block_helpers);
+    return render_into(engine, context, out, F, no_block_helpers);
 }
 
 // render_into with helpers F and block helpers G, as described under
 // Block helpers above.
 fn render_into<T, F, G>(engine: const Engine&, context: const T&, out: u8[>..]&) -> i64, u8[>..] {
     guard engine.error.len == 0 else { return 0, str(engine.error); }
-    let helpers_err = _registration_error(engine, F, G);
+    let helpers_err = registration_error(engine, F, G);
     guard helpers_err.len == 0 else { return 0, helpers_err; }
     let names: const u8[:][>..] = [];
-    _name_slices(engine, names);
+    name_slices(engine, names);
     let doc: json::Node[>..] = [];
-    _doc_struct(doc, names, "", context);
-    _evaluate(engine, doc, out, F, G);
+    doc_struct(doc, names, "", context);
+    evaluate(engine, doc, out, F, G);
     return doc.len, [];
 }
 
@@ -2680,24 +2680,24 @@ fn render_into<T, F, G>(engine: const Engine&, context: const T&, out: u8[>..]&)
 // "json: expected ',' or '}' at byte 41".
 // On an error out is left as it was.
 fn render_json(engine: const Engine&, json_text: const u8[:], out: u8[>..]&) -> u8[>..] {
-    return render_json(engine, json_text, out, _no_helpers);
+    return render_json(engine, json_text, out, no_helpers);
 }
 
 // render_json with helpers F.
 fn render_json<F>(engine: const Engine&, json_text: const u8[:], out: u8[>..]&) -> u8[>..] {
-    return render_json(engine, json_text, out, F, _no_block_helpers);
+    return render_json(engine, json_text, out, F, no_block_helpers);
 }
 
 // render_json with helpers F and block helpers G.
 fn render_json<F, G>(engine: const Engine&, json_text: const u8[:], out: u8[>..]&) -> u8[>..] {
     guard engine.error.len == 0 else { return str(engine.error); }
-    let helpers_err = _registration_error(engine, F, G);
+    let helpers_err = registration_error(engine, F, G);
     guard helpers_err.len == 0 else { return helpers_err; }
     let doc: json::Node[>..] = [];
     let decoded: u8[>..] = [];
     let root, err = json::parse(json_text, doc, decoded);
     guard root else { return str(err); }
-    _evaluate(engine, doc, out, F, G);
+    evaluate(engine, doc, out, F, G);
     return [];
 }
 
@@ -2705,18 +2705,18 @@ fn render_json<F, G>(engine: const Engine&, json_text: const u8[:], out: u8[>..]
 // the error, empty when the render holds: engine.error, a helper
 // registered twice, "cannot read JSON <path>", or "<path>: <json error>".
 fn render_json_file(engine: const Engine&, path: const u8[:], out: u8[>..]&) -> u8[>..] {
-    return render_json_file(engine, path, out, _no_helpers);
+    return render_json_file(engine, path, out, no_helpers);
 }
 
 // render_json_file with helpers F.
 fn render_json_file<F>(engine: const Engine&, path: const u8[:], out: u8[>..]&) -> u8[>..] {
-    return render_json_file(engine, path, out, F, _no_block_helpers);
+    return render_json_file(engine, path, out, F, no_block_helpers);
 }
 
 // render_json_file with helpers F and block helpers G.
 fn render_json_file<F, G>(engine: const Engine&, path: const u8[:], out: u8[>..]&) -> u8[>..] {
     guard engine.error.len == 0 else { return str(engine.error); }
-    let helpers_err = _registration_error(engine, F, G);
+    let helpers_err = registration_error(engine, F, G);
     guard helpers_err.len == 0 else { return helpers_err; }
     let text: u8[>..] = [];
     guard read_file(path, text) else { return str("cannot read JSON ", path); }
@@ -2729,12 +2729,12 @@ fn render_json_file<F, G>(engine: const Engine&, path: const u8[:], out: u8[>..]
 // the error, as render_into's, empty when the render holds; with an error
 // the text is empty.
 fn render<T>(engine: const Engine&, context: const T&) -> u8[>..], u8[>..] {
-    return render(engine, context, _no_helpers);
+    return render(engine, context, no_helpers);
 }
 
 // render with helpers F.
 fn render<T, F>(engine: const Engine&, context: const T&) -> u8[>..], u8[>..] {
-    return render(engine, context, F, _no_block_helpers);
+    return render(engine, context, F, no_block_helpers);
 }
 
 // render with helpers F and block helpers G.

@@ -1,9 +1,9 @@
-// _validate_path: a normal path passes, a keyword only fails past the first
+// validate_path: a normal path passes, a keyword only fails past the first
 // byte, and a character from the invalid set fails the segment.
 import gooseneck from "..";
 
 fn check(label: const u8[:], path: const u8[:], want: bool, why_want: const u8[:]) {
-    let ok, why = gooseneck::_validate_path(path);
+    let ok, why = gooseneck::validate_path(path);
     if ok != want || why != why_want {
         print(label);
         print("ok: ", ok, " want: ", want);

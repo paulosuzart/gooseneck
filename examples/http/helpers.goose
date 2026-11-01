@@ -3,7 +3,7 @@
 // render, in whole seconds since the Unix epoch.
 namespace helpers;
 
-fn _suffix(n: i64) -> const u8[:] {
+fn suffix(n: i64) -> const u8[:] {
     let mod100 = n % 100;
     if mod100 >= 11 && mod100 <= 13 { return "th"; }
     let mod10 = n % 10;
@@ -18,7 +18,7 @@ inline fn ordinal(cx: gooseneck::HelperContext&) -> json::Value {
         Int n => {
             let start = cx.text.len;
             format(cx.text, n.v);
-            cx.text.append(_suffix(n.v));
+            cx.text.append(suffix(n.v));
             return json::Value.Str { s: cx.text[start..] };
         },
         _ => { return json::Value.Null; },
