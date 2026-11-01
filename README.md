@@ -64,7 +64,10 @@ not rename a namespace; it only picks the package.)
 
 Either way you get an `Engine`. When the template is malformed,
 `engine.error` holds the message and every render returns it instead of
-rendering. The `Engine` owns a copy of everything it needs, so the template
+rendering. The message says where and why, as a compiler does:
+`3:5: unexpected /each` is line 3, column 5 (in bytes, both from 1), and
+`load_engine` puts the path first, `page.hbs:3:5: unexpected /each`. The
+place is the tag's `{{`, or the argument at fault inside it. The `Engine` owns a copy of everything it needs, so the template
 text may go away. Helpers and block helpers aren't given here but to each
 render (see [Helpers](#helpers)): an `Engine` can't hold a function.
 
@@ -383,8 +386,10 @@ it and the latest results.
   helper its content as plain text.
 - **Two kinds of context**: a typed Goose struct (converted through
   compile-time reflection) or JSON text and files.
-- **Clear compile errors**: `unexpected /with`, `unclosed #each`,
-  `unclosed subexpression: (eq a b`, `#if takes exactly one argument`, and more.
+- **Clear compile errors**, with line and column: `4:1: unexpected /with`,
+  `1:1: unclosed #each`, `1:7: unclosed subexpression: (eq a b`,
+  `2:1: #if takes exactly one argument`, `1:9: Invalid characted in segment: a!`,
+  and more.
   Render errors for the helpers, before anything is written:
   `unknown block helper "typo"`, `duplicate helper "now"`.
 

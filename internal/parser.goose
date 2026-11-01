@@ -22,12 +22,14 @@ namespace gooseneck;
 // {{else}} has moved it on to its inverse, and whether an {{else helper}}
 // chained it onto the block before it, so that block's closing tag closes
 // it too. names are the block parameters it declares, as |a b|: a run of
-// the parser's list of names.
-struct OpenBlock { opener: i64, last: i64, in_inverse: bool, chained: bool, names: Range }
+// the parser's list of names. tag_start is where its opening tag starts in
+// the template, for the error when it is never closed.
+struct OpenBlock { opener: i64, last: i64, in_inverse: bool, chained: bool, names: Range, tag_start: i64 }
 
-// The top level, or a block that {{#helper}} opened, declaring names.
-fn open_block(opener: i64, names: Range) -> OpenBlock {
-    return OpenBlock { opener: opener, last: NONE, in_inverse: false, chained: false, names: names };
+// The top level, or a block that {{#helper}} opened at tag_start,
+// declaring names.
+fn open_block(opener: i64, names: Range, tag_start: i64) -> OpenBlock {
+    return OpenBlock { opener: opener, last: NONE, in_inverse: false, chained: false, names: names, tag_start: tag_start };
 }
 
 // The position in open of the block that started the innermost chain:
@@ -90,25 +92,6 @@ fn node(kind: NodeKind, start: i64, end: i64, escaped: bool) -> Node {
     };
 }
 
-// A compile error found while parsing a call: its message, and the template
-// text it is about, possibly empty. It is two slices rather than one built
-// string because the call parser is recursive (subexpressions nest) and may
-// hold no growable value across its recursive calls (spec §7.8).
-// error_text joins them once parsing has stopped.
-struct CallError { message: const u8[:], text: const u8[:] }
-
-fn no_error() -> CallError {
-    return CallError { message: "", text: "" };
-}
-
-fn is_ok(err: CallError) -> bool {
-    return err.message.len == 0;
-}
-
-fn error_text(err: CallError) -> u8[>..] {
-    return str(err.message, err.text);
-}
-
 // The calls of a tag are parsed from its TagTokens (see lex_tag). A call
 // is words: the helper name, then its arguments. A word ends at the next
 // token that has whitespace before it, except inside parentheses, so
@@ -161,40 +144,39 @@ fn closing_paren(tokens: const TagToken[>..<]&, open: i64, stop: i64) -> i64 {
     return stop;
 }
 
-// What keeps the argument word tokens[from..to] from closing: a quote that
-// never closes, a ')' that closes nothing or a '(' that never closes.
-// Its text runs from the word to call_end, the end of the call.
-fn word_error(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64, call_end: i64) -> CallError {
-    let rest = source[tokens[from].start..call_end];
+// Ends the compile at the argument word tokens[from..to] when it does not
+// close: a quote that never closes, a ')' that closes nothing or a '('
+// that never closes. The error shows the text from the word to call_end,
+// the end of the call.
+fn check_word(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64, call_end: i64) {
+    let at = tokens[from].start;
+    let rest = source[at..call_end];
     var depth: i64 = 0;
     var i = from;
     while i < to {
         let kind = tokens[i].kind;
-        guard kind != TagTokenKind.UnclosedString else { return CallError { message: "unclosed string: ", text: rest }; }
+        guard kind != TagTokenKind.UnclosedString else { error_at(source, at, str("unclosed string: ", rest)); }
         if kind == TagTokenKind.LParen { depth += 1; }
         if kind == TagTokenKind.RParen {
-            guard depth > 0 else { return CallError { message: "unexpected ): ", text: rest }; }
+            guard depth > 0 else { error_at(source, at, str("unexpected ): ", rest)); }
             depth -= 1;
         }
         i += 1;
     }
-    guard depth == 0 else { return CallError { message: "unclosed subexpression: ", text: rest }; }
-    return no_error();
+    guard depth == 0 else { error_at(source, at, str("unclosed subexpression: ", rest)); }
 }
 
-// How many argument words tokens[at..stop] holds, or the error of the
-// first one that does not close.
-fn count_args(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call_end: i64) -> i64, CallError {
+// How many argument words tokens[at..stop] holds, each checked to close.
+fn count_args(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call_end: i64) -> i64 {
     var count: i64 = 0;
     var word = at;
     while word < stop {
         let end = word_end(tokens, word, stop);
-        let err = word_error(source, tokens, word, end, call_end);
-        guard is_ok(err) else { return count, err; }
+        check_word(source, tokens, word, end, call_end);
         count += 1;
         word = end;
     }
-    return count, no_error();
+    return count;
 }
 
 // Takes count slots at the end of args, Null until the parser fills them.
@@ -221,13 +203,13 @@ fn hash_equals(tokens: const TagToken[>..<]&, from: i64, to: i64) -> i64 {
 }
 
 // The helper name of the call in tokens[at..stop] must be there and read
-// as a path would. call is the text the missing name error shows.
-fn check_helper_name(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call: const u8[:]) -> CallError {
+// as a path would. call is the call's text, at byte call_at, which the
+// missing name error shows.
+fn check_helper_name(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call: const u8[:], call_at: i64) {
     let end = name_end(tokens, at, stop);
-    guard end > at else { return CallError { message: "missing helper name: ", text: call }; }
+    guard end > at else { error_at(source, call_at, str("missing helper name: ", call)); }
     let why = path_error(source, tokens, at, end);
-    guard why.len == 0 else { return CallError { message: why, text: "" }; }
-    return no_error();
+    guard why.len == 0 else { error_at(source, tokens[at].start, str(why, ": ", tokens_text(source, tokens, at, end))); }
 }
 
 // A literal word, one token: a quoted string (its text between the
@@ -253,27 +235,26 @@ fn is_literal(kind: TagTokenKind) -> bool {
 
 // Reads the argument word tokens[from..to]: a subexpression, a literal,
 // or else a path, validated as any other. A subexpression's own arguments
-// go onto args.
-recursive fn arg_value(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64, args: Arg[>..]&) -> ArgValue, CallError {
-    guard to > from else { return ArgValue.Null, CallError { message: "missing argument value", text: "" }; }
+// go onto args. from is past the '=' of a hash argument, which an empty
+// value leaves alone.
+recursive fn arg_value(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64, args: Arg[>..]&) -> ArgValue {
+    guard to > from else { error_at(source, tokens[from - 1].start, "missing argument value"); }
     let first = tokens[from];
     let text = tokens_text(source, tokens, from, to);
     if first.kind == TagTokenKind.LParen {
         let close = closing_paren(tokens, from, to);
-        guard close == to - 1 else { return ArgValue.Null, CallError { message: "text after subexpression: ", text: text }; }
-        let name, params, hash, err = parse_call(source, tokens, from + 1, close, tokens[close].start, args);
-        guard is_ok(err) else { return ArgValue.Null, err; }
-        let name_err = check_helper_name(source, tokens, from + 1, close, text);
-        guard is_ok(name_err) else { return ArgValue.Null, name_err; }
-        return ArgValue.Call { name: name, params: params, hash: hash }, no_error();
+        guard close == to - 1 else { error_at(source, first.start, str("text after subexpression: ", text)); }
+        let name, params, hash = parse_call(source, tokens, from + 1, close, tokens[close].start, args);
+        check_helper_name(source, tokens, from + 1, close, text, first.start);
+        return ArgValue.Call { name: name, params: params, hash: hash };
     }
     if first.kind == TagTokenKind.String {
-        guard to - from == 1 else { return ArgValue.Null, CallError { message: "unclosed string: ", text: text }; }
+        guard to - from == 1 else { error_at(source, first.start, str("unclosed string: ", text)); }
     }
-    if to - from == 1 && is_literal(first.kind) { return literal(source, first), no_error(); }
+    if to - from == 1 && is_literal(first.kind) { return literal(source, first); }
     let why = path_error(source, tokens, from, to);
-    guard why.len == 0 else { return ArgValue.Null, CallError { message: why, text: "" }; }
-    return ArgValue.Path { path: Span { start: first.start, len: text.len }, param_ref: no_param_ref() }, no_error();
+    guard why.len == 0 else { error_at(source, first.start, str(why, ": ", text)); }
+    return ArgValue.Path { path: Span { start: first.start, len: text.len }, param_ref: no_param_ref() };
 }
 
 // Parses the helper call in tokens[at..stop] into the helper name, the
@@ -284,7 +265,7 @@ recursive fn arg_value(source: const u8[:], tokens: const TagToken[>..<]&, from:
 // Ranges view; a subexpression among them puts its own run after that one.
 // So the run is taken, Null, as soon as the arguments are counted, and each
 // slot is filled as its argument is read.
-recursive fn parse_call(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call_end: i64, args: Arg[>..]&) -> Span, Range, Range, CallError {
+recursive fn parse_call(source: const u8[:], tokens: const TagToken[>..<]&, at: i64, stop: i64, call_end: i64, args: Arg[>..]&) -> Span, Range, Range {
     let name_end = name_end(tokens, at, stop);
     let helper = if name_end > at {
         Span { start: tokens[at].start, len: tokens[name_end - 1].end - tokens[at].start }
@@ -293,9 +274,7 @@ recursive fn parse_call(source: const u8[:], tokens: const TagToken[>..<]&, at: 
     };
     var params = Range { first: args.len, count: 0 };
     var hash = Range { first: args.len, count: 0 };
-    let count, count_err = count_args(source, tokens, name_end, stop, call_end);
-    guard is_ok(count_err) else { return helper, params, hash, count_err; }
-    reserve_args(args, count);
+    reserve_args(args, count_args(source, tokens, name_end, stop, call_end));
     var word = name_end;
     while word < stop {
         let end = word_end(tokens, word, stop);
@@ -303,21 +282,19 @@ recursive fn parse_call(source: const u8[:], tokens: const TagToken[>..<]&, at: 
         let key_start = tokens[word].start;
         let equals = hash_equals(tokens, word, end);
         if equals != NONE {
-            let value, err = arg_value(source, tokens, equals + 1, end, args);
-            guard is_ok(err) else { return helper, params, hash, err; }
+            let value = arg_value(source, tokens, equals + 1, end, args);
             args[slot] = Arg { key: Span { start: key_start, len: tokens[equals].start - key_start }, value: value };
             hash.count += 1;
         } else {
-            guard hash.count == 0 else { return helper, params, hash, CallError { message: "positional argument after hash arguments: ", text: tokens_text(source, tokens, word, end) }; }
-            let value, err = arg_value(source, tokens, word, end, args);
-            guard is_ok(err) else { return helper, params, hash, err; }
+            guard hash.count == 0 else { error_at(source, key_start, str("positional argument after hash arguments: ", tokens_text(source, tokens, word, end))); }
+            let value = arg_value(source, tokens, word, end, args);
             args[slot] = Arg { key: Span { start: key_start, len: 0 }, value: value };
             params.count += 1;
         }
         word = end;
     }
     hash.first = params.first + params.count;
-    return helper, params, hash, no_error();
+    return helper, params, hash;
 }
 
 // Whether arg is the literal true or false.
@@ -333,29 +310,26 @@ fn is_built_in_block(helper: const u8[:]) -> bool {
     return helper == "with" || helper == "each" || helper == "if" || helper == "unless";
 }
 
-// Checks a block's call against what its helper takes: with and each
-// exactly one param and no hash; if and unless exactly one param and at
-// most includeZero=true or false. Any other helper is a user block helper,
-// which takes anything; whether it is registered is the render's to check,
-// since the block helpers are given to the render (see
-// unknown_block_error). Returns the error, empty when the call holds.
-fn check_call(source: const u8[:], helper: const u8[:], params: Range, hash: Range, args: const Arg[>..]&) -> u8[>..] {
+// Checks a block's call, in the tag at byte tag_start, against what its
+// helper takes: with and each exactly one param and no hash; if and unless
+// exactly one param and at most includeZero=true or false. Any other helper
+// is a user block helper, which takes anything; whether it is registered is
+// the render's to check, since the block helpers are given to the render
+// (see unknown_block_error).
+fn check_call(source: const u8[:], tag_start: i64, helper: const u8[:], params: Range, hash: Range, args: const Arg[>..]&) {
     if helper == "with" || helper == "each" {
-        guard params.count == 1 else { return str("#", helper, " takes exactly one argument"); }
-        guard hash.count == 0 else { return str("#", helper, " takes no hash arguments"); }
-        return [];
+        guard params.count == 1 else { error_at(source, tag_start, str("#", helper, " takes exactly one argument")); }
+        guard hash.count == 0 else { error_at(source, tag_start, str("#", helper, " takes no hash arguments")); }
     }
     if helper == "if" || helper == "unless" {
-        guard params.count == 1 else { return str("#", helper, " takes exactly one argument"); }
+        guard params.count == 1 else { error_at(source, tag_start, str("#", helper, " takes exactly one argument")); }
         for i in hash.count {
             let arg = arg_at(args, hash, i);
             let key = span_text(source, arg.key);
-            guard key == "includeZero" else { return str("#", helper, ": unknown hash argument ", key); }
-            guard is_bool_literal(arg) else { return str("#", helper, ": includeZero must be true or false"); }
+            guard key == "includeZero" else { error_at(source, arg.key.start, str("#", helper, ": unknown hash argument ", key)); }
+            guard is_bool_literal(arg) else { error_at(source, arg.key.start, str("#", helper, ": includeZero must be true or false")); }
         }
-        return [];
     }
-    return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -382,21 +356,24 @@ fn is_param_name(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, 
 }
 
 // Reads the names of as |a b|, whose "as" is tokens[as_at], onto names.
-// tag_end is where the tag's text ends. Returns their run, or an error
-// such as "invalid block parameter name: a.b".
-fn parse_param_names(source: const u8[:], tokens: const TagToken[>..<]&, as_at: i64, tag_end: i64, names: Span[>..]&) -> Range, u8[>..] {
+// tag_end is where the tag's text ends. Returns their run; a name that is
+// not one, "invalid block parameter name: a.b", ends the compile.
+fn parse_param_names(source: const u8[:], tokens: const TagToken[>..<]&, as_at: i64, tag_end: i64, names: Span[>..]&) -> Range {
     var run = Range { first: names.len, count: 0 };
     let last = tokens.len - 1;
     var word = as_at + 2;
     while word < last {
         let end = name_end(tokens, word, last);
-        guard is_param_name(source, tokens, word, end) else { return run, str("invalid block parameter name: ", tokens_text(source, tokens, word, end)); }
+        guard is_param_name(source, tokens, word, end) else {
+            error_at(source, tokens[word].start, str("invalid block parameter name: ", tokens_text(source, tokens, word, end)));
+        }
         names.push(Span { start: tokens[word].start, len: tokens[word].end - tokens[word].start });
         run.count += 1;
         word = end;
     }
-    guard run.count > 0 else { return run, str("missing block parameter names: ", source[tokens[as_at].start..tag_end]); }
-    return run, [];
+    let as_start = tokens[as_at].start;
+    guard run.count > 0 else { error_at(source, as_start, str("missing block parameter names: ", source[as_start..tag_end])); }
+    return run;
 }
 
 // The position of name among the names of run, or NONE.
@@ -453,32 +430,28 @@ fn takes_block_params(helper: const u8[:]) -> bool {
 }
 
 // Parses the block call in tokens, the lexed body of a block tag that
-// ends at tag_end ("with person" for {{#with person}}), checks it, and
-// adds its Block node to the innermost open block. Returns the node's
-// index and the run of block parameter names it declares, or an error.
-fn parse_block(source: const u8[:], tokens: const TagToken[>..<]&, tag_end: i64, nodes: Node[>..]&, roots: i64[>..]&, open: OpenBlock[>..<]&, args: Arg[>..]&, names: Span[>..]&) -> i64, Range, u8[>..] {
+// spans tag_start to tag_end ("with person" for {{#with person}}), checks
+// it, and adds its Block node to the innermost open block. Returns the
+// node's index and the run of block parameter names it declares.
+fn parse_block(source: const u8[:], tokens: const TagToken[>..<]&, tag_start: i64, tag_end: i64, nodes: Node[>..]&, roots: i64[>..]&, open: OpenBlock[>..<]&, args: Arg[>..]&, names: Span[>..]&) -> i64, Range {
     let as_at = as_index(tokens);
     let call_stop = if as_at == NONE { tokens.len } else { as_at };
     let call_end = if as_at == NONE { tag_end } else { tokens[as_at].start };
     let mark = args.len;
     var declared = Range { first: names.len, count: 0 };
-    let helper, params, hash, err = parse_call(source, tokens, 0, call_stop, call_end, args);
-    guard is_ok(err) else { return NONE, declared, error_text(err); }
+    let helper, params, hash = parse_call(source, tokens, 0, call_stop, call_end, args);
     let name = span_text(source, helper);
-    let call_err = check_call(source, name, params, hash, args);
-    guard call_err.len == 0 else { return NONE, declared, call_err; }
+    check_call(source, tag_start, name, params, hash, args);
     bind_arg_paths(source, args, mark, open, names);
     if as_at != NONE {
-        guard takes_block_params(name) else { return NONE, declared, str("#", name, " takes no block parameters"); }
-        let run, names_err = parse_param_names(source, tokens, as_at, tag_end, names);
-        guard names_err.len == 0 else { return NONE, declared, names_err; }
-        declared = run;
+        guard takes_block_params(name) else { error_at(source, tokens[as_at].start, str("#", name, " takes no block parameters")); }
+        declared = parse_param_names(source, tokens, as_at, tag_end, names);
     }
     var node = node(NodeKind.Block, helper.start, helper.start + helper.len, false);
     node.params = params;
     node.hash = hash;
     node.block_params = declared.count;
-    return add(nodes, roots, open, node), declared, [];
+    return add(nodes, roots, open, node), declared;
 }
 
 // Whether a mustache whose lexed body is tokens holds a helper call with
@@ -510,27 +483,24 @@ fn may_be_helper(source: const u8[:], tokens: const TagToken[>..<]&, param_ref: 
 // starts its inverse. A block still open at the end is an error. A {{...}} or
 // {{{...}}} with arguments, {{helper args}}, is a Call node; any other is a
 // field lookup, already trimmed. escaped says whether what either writes is
-// HTML-escaped. Returns the error text, empty
-// when the parse holds.
-
-fn parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots: i64[>..]&, args: Arg[>..]&) -> u8[>..] {
+// HTML-escaped. The first error ends the compile.
+fn parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots: i64[>..]&, args: Arg[>..]&) {
     let open: OpenBlock[>..<] = [];
     let names: Span[>..] = [];
     // The lexed body of the tag at hand, reused from tag to tag.
     let tag_tokens: TagToken[>..<] = [];
-    open.push(open_block(NONE, Range { first: 0, count: 0 }));
+    open.push(open_block(NONE, Range { first: 0, count: 0 }, 0));
     for token in tokens {
         match token.token_type {
             Comment => {},
             RawOpen => {
                 lex_tag(source, token.start, token.end, tag_tokens);
-                let opener, declared, err = parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
-                guard err.len == 0 else { return err; }
-                open.push(open_block(opener, declared));
+                let opener, declared = parse_block(source, tag_tokens, token.outer_start, token.end, nodes, roots, open, args, names);
+                open.push(open_block(opener, declared, token.outer_start));
             },
             RawClose => {
                 let helper = source[token.start..token.end];
-                guard innermost_is(source, nodes, open, helper) else { return str("unexpected /", helper); }
+                guard innermost_is(source, nodes, open, helper) else { error_at(source, token.outer_start, str("unexpected /", helper)); }
                 open.resize(chain_start(open));
             },
             Text => {
@@ -542,41 +512,37 @@ fn parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots: 
                 let word = source[token.start..token.end];
                 if token.tag == TagKind.Else {
                     let inner .= innermost(open);
-                    guard inner.opener != NONE && !inner.in_inverse else { return str("unexpected else"); }
+                    guard inner.opener != NONE && !inner.in_inverse else { error_at(source, token.outer_start, "unexpected else"); }
                     inner.in_inverse = true;
                     inner.last = NONE;
                 } else if token.tag == TagKind.ElseChain {
                     // {{else helper args}}: the inverse holds one block,
                     // helper, which takes the rest up to the closing tag.
                     let inner .= innermost(open);
-                    guard inner.opener != NONE && !inner.in_inverse else { return str("unexpected else"); }
+                    guard inner.opener != NONE && !inner.in_inverse else { error_at(source, token.outer_start, "unexpected else"); }
                     inner.in_inverse = true;
                     inner.last = NONE;
                     lex_tag(source, token.start + 4, token.end, tag_tokens);
-                    let opener, declared, err = parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
-                    guard err.len == 0 else { return err; }
-                    var chained = open_block(opener, declared);
+                    let opener, declared = parse_block(source, tag_tokens, token.outer_start, token.end, nodes, roots, open, args, names);
+                    var chained = open_block(opener, declared, token.outer_start);
                     chained.chained = true;
                     open.push(chained);
                 } else if token.tag == TagKind.Close {
                     let helper = trim(word[1..]);
-                    guard innermost_is(source, nodes, open, helper) else { return str("unexpected /", helper); }
+                    guard innermost_is(source, nodes, open, helper) else { error_at(source, token.outer_start, str("unexpected /", helper)); }
                     open.resize(chain_start(open));
                 } else if token.tag == TagKind.Open {
                     lex_tag(source, token.start + 1, token.end, tag_tokens);
-                    let opener, declared, err = parse_block(source, tag_tokens, token.end, nodes, roots, open, args, names);
-                    guard err.len == 0 else { return err; }
-                    open.push(open_block(opener, declared));
+                    let opener, declared = parse_block(source, tag_tokens, token.outer_start, token.end, nodes, roots, open, args, names);
+                    open.push(open_block(opener, declared, token.outer_start));
                 } else {
                     // A mustache, {{helper args}} or {{path}}. {{^...}} is
                     // read as one too, and fails as a path.
                     lex_tag(source, token.start, token.end, tag_tokens);
                     if is_call(tag_tokens) {
                         let mark = args.len;
-                        let helper, params, hash, err = parse_call(source, tag_tokens, 0, tag_tokens.len, token.end, args);
-                        guard is_ok(err) else { return error_text(err); }
-                        let name_err = check_helper_name(source, tag_tokens, 0, tag_tokens.len, word);
-                        guard is_ok(name_err) else { return error_text(name_err); }
+                        let helper, params, hash = parse_call(source, tag_tokens, 0, tag_tokens.len, token.end, args);
+                        check_helper_name(source, tag_tokens, 0, tag_tokens.len, word, token.outer_start);
                         bind_arg_paths(source, args, mark, open, names);
                         var node = node(NodeKind.Call, helper.start, helper.start + helper.len, token.escaped);
                         node.params = params;
@@ -584,7 +550,7 @@ fn parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots: 
                         add(nodes, roots, open, node);
                     } else {
                         let why = path_error(source, tag_tokens, 0, tag_tokens.len);
-                        guard why.len == 0 else { return str(why); }
+                        guard why.len == 0 else { error_at(source, token.outer_start, str(why, if word.len > 0 { ": " } else { "" }, word)); }
                         var node = node(NodeKind.Expression, token.start, token.end, token.escaped);
                         node.param_ref = param_ref(source, word, open, names);
                         node.helper_first = may_be_helper(source, tag_tokens, node.param_ref);
@@ -594,9 +560,8 @@ fn parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots: 
             },
         }
     }
-    let unclosed = open[chain_start(open)].opener;
-    guard unclosed == NONE else { return str("unclosed #", span_text(source, nodes[unclosed].value)); }
-    return [];
+    let unclosed = open[chain_start(open)];
+    guard unclosed.opener == NONE else { error_at(source, unclosed.tag_start, str("unclosed #", span_text(source, nodes[unclosed.opener].value))); }
 }
 
 // Whether names, spans of text, holds name.
@@ -651,13 +616,11 @@ fn failed(error: const u8[:]) -> Engine {
 // Tokenizes, parses and validates template, and returns the Engine for it.
 // prefix starts the error text, if any.
 fn compile(template: const u8[:], prefix: const u8[:]) -> Engine {
-    let tokens, err = tokenize(template);
-    guard err.len == 0 else { return failed(str(prefix, err)); }
     let nodes: Node[>..] = [];
     let roots: i64[>..] = [];
     let args: Arg[>..] = [];
-    let parse_err = parse(template, tokens, nodes, roots, args);
-    guard parse_err.len == 0 else { return failed(str(prefix, parse_err)); }
+    let err = parse_template(template, nodes, roots, args);
+    guard err.len == 0 else { return failed(str(prefix, err)); }
 
     // The paths are those of the expressions and those among the
     // arguments, which hold every call's, subexpressions included. A
@@ -678,4 +641,24 @@ fn compile(template: const u8[:], prefix: const u8[:]) -> Engine {
         }
     }
     return Engine { nodes: nodes, roots: roots, args: args, names: names, text: template, error: "" };
+}
+
+// Tokenizes and parses template into nodes, roots and args. Returns the
+// compile error, or nothing when the template compiles. The tokenizer and
+// the parser stop at their first error with error_at, which returns it
+// here from however deep they found it.
+fn parse_template(template: const u8[:], nodes: Node[>..]&, roots: i64[>..]&, args: Arg[>..]&) -> u8[>..] {
+    parse(template, tokenize(template), nodes, roots, args);
+    return [];
+}
+
+// Ends the compile with the error why, found at byte at of source, as
+// "line:column: why", both counted from 1: 3:5: unexpected /each.
+fn error_at(source: const u8[:], at: i64, why: const u8[:]) {
+    var line: i64 = 1;
+    var column: i64 = 1;
+    for i in at {
+        if source[i] == '\n' { line += 1; column = 1; } else { column += 1; }
+    }
+    return str(line, ":", column, ": ", why) from parse_template;
 }

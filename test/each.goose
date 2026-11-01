@@ -172,11 +172,11 @@ fn main() {
     check("param under parent each", "{{#each tags as |tag|}}{{#each ../matrix as |row|}}{{tag}}{{/each}}{{/each}}", context, false, true, "newnewsalesale");
     check("params on else each", "{{#if title}}{{else each tags as |t|}}{{t}}{{/if}}{{#if empty}}{{else each tags as |t|}}{{t}}{{/if}}", context, true, true, "newsale");
     check("standalone params", "{{#each tags as |tag|}}\n{{tag}}\n{{/each}}\n", context, true, true, "new\nsale\n");
-    check_rejected("no param names", "{{#each tags as ||}}x{{/each}}", context, "missing block parameter names: as ||");
-    check_rejected("dotted param name", "{{#each tags as |a.b|}}x{{/each}}", context, "invalid block parameter name: a.b");
-    check_rejected("unclosed params", "{{#each tags as |tag}}x{{/each}}", context, "Invalid characted in segment");
-    check_rejected("params without as", "{{#each tags |tag|}}x{{/each}}", context, "Invalid characted in segment");
-    check_rejected("params on if", "{{#if title as |t|}}{{t}}{{/if}}", context, "#if takes no block parameters");
+    check_rejected("no param names", "{{#each tags as ||}}x{{/each}}", context, "1:14: missing block parameter names: as ||");
+    check_rejected("dotted param name", "{{#each tags as |a.b|}}x{{/each}}", context, "1:18: invalid block parameter name: a.b");
+    check_rejected("unclosed params", "{{#each tags as |tag}}x{{/each}}", context, "1:17: Invalid characted in segment: |tag");
+    check_rejected("params without as", "{{#each tags |tag|}}x{{/each}}", context, "1:14: Invalid characted in segment: |tag|");
+    check_rejected("params on if", "{{#if title as |t|}}{{t}}{{/if}}", context, "1:13: #if takes no block parameters");
 
     // @root: the context the render began with, from anywhere. On the
     // struct, a field only @root names (owner.last) is still converted.
@@ -198,17 +198,17 @@ fn main() {
     // An object writes nothing (handlebars.js writes [object Object]).
     check("root alone", "[{{@root}}]", context, true, true, "[]");
 
-    check_rejected("unclosed each", "{{#each tags}}x", context, "unclosed #each");
-    check_rejected("unclosed inner", "{{#each tags}}{{#if this}}x{{/each}}", context, "unexpected /each");
-    check_rejected("stray close", "x{{/each}}", context, "unexpected /each");
-    check_rejected("mismatched close", "{{#each tags}}x{{/if}}", context, "unexpected /if");
-    check_rejected("each without param", "{{#each}}x{{/each}}", context, "#each takes exactly one argument");
-    check_rejected("each two params", "{{#each tags items}}x{{/each}}", context, "#each takes exactly one argument");
-    check_rejected("each hash", "{{#each tags key=1}}x{{/each}}", context, "#each takes no hash arguments");
-    check_rejected("else at top", "a{{else}}b", context, "unexpected else");
-    check_rejected("second else", "{{#if tags}}x{{else}}y{{else}}z{{/if}}", context, "unexpected else");
+    check_rejected("unclosed each", "{{#each tags}}x", context, "1:1: unclosed #each");
+    check_rejected("unclosed inner", "{{#each tags}}{{#if this}}x{{/each}}", context, "1:28: unexpected /each");
+    check_rejected("stray close", "x{{/each}}", context, "1:2: unexpected /each");
+    check_rejected("mismatched close", "{{#each tags}}x{{/if}}", context, "1:16: unexpected /if");
+    check_rejected("each without param", "{{#each}}x{{/each}}", context, "1:1: #each takes exactly one argument");
+    check_rejected("each two params", "{{#each tags items}}x{{/each}}", context, "1:1: #each takes exactly one argument");
+    check_rejected("each hash", "{{#each tags key=1}}x{{/each}}", context, "1:1: #each takes no hash arguments");
+    check_rejected("else at top", "a{{else}}b", context, "1:2: unexpected else");
+    check_rejected("second else", "{{#if tags}}x{{else}}y{{else}}z{{/if}}", context, "1:23: unexpected else");
     check("else if", "{{#if empty}}x{{else if items}}y{{/if}}", context, true, true, "y");
-    check_rejected("unknown data variable", "{{#each tags}}{{@level}}{{/each}}", context, "Unknown data variable: only @root, and @index, @key, @first and @last after any ../");
-    check_rejected("root after ../", "{{#each tags}}{{@../root.title}}{{/each}}", context, "Unknown data variable: only @root, and @index, @key, @first and @last after any ../");
-    check_rejected("root path ends in a dot", "{{@root.}}", context, "Invalid characted in segment");
+    check_rejected("unknown data variable", "{{#each tags}}{{@level}}{{/each}}", context, "1:15: Unknown data variable: only @root, and @index, @key, @first and @last after any ../: @level");
+    check_rejected("root after ../", "{{#each tags}}{{@../root.title}}{{/each}}", context, "1:15: Unknown data variable: only @root, and @index, @key, @first and @last after any ../: @../root.title");
+    check_rejected("root path ends in a dot", "{{@root.}}", context, "1:1: Invalid characted in segment: @root.");
 }

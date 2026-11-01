@@ -79,9 +79,9 @@ fn text_token(start: i64, end: i64) -> Token {
 
 // Reads the tag that opens with "{{" at input[at]. The forms are {{x}},
 // {{{x}}}, {{! x }} and {{!-- x --}}, each with an optional ~ just inside
-// either end: {{~x~}}, {{~{x}~}}, {{~!-- x --~}}. Returns the tag's token,
-// and an error, empty when the tag closes.
-fn scan_tag(input: const u8[:], at: i64) -> Token, const u8[:] {
+// either end: {{~x~}}, {{~{x}~}}, {{~!-- x --~}}. Returns the tag's token;
+// a tag that never closes is the compile's error.
+fn scan_tag(input: const u8[:], at: i64) -> Token {
     var p = at + 2;
     let strip_left = p < input.len && input[p] == '~';
     if strip_left { p += 1; }
@@ -120,13 +120,13 @@ fn scan_tag(input: const u8[:], at: i64) -> Token, const u8[:] {
                 tag: tag,
                 start: start, end: end, outer_start: at, outer_end: close + 2,
                 escaped: escaped, strip_left: strip_left, strip_right: strip_right,
-            }, "";
+            };
         }
         // That "}}" was not this tag's closing (e.g. inside {{!-- x }} y --}}).
         from = close + 1;
         found = find(input[from..], "}}");
     }
-    return text_token(at, at), "unclosed tag";
+    error_at(input, at, "unclosed tag");
 }
 
 // A tag token for template[start..end], the tag being
@@ -141,18 +141,18 @@ fn tag_token(kind: TokenType, start: i64, end: i64, outer_start: i64, outer_end:
 }
 
 // The token of the tag that opens with "{{{{" at input[at] and closes
-// with "}}}}", its body trimmed: {{{{raw}}}} or {{{{/raw}}}}. Returns an
-// error, empty when the tag closes.
-fn scan_raw_tag(input: const u8[:], at: i64, kind: TokenType) -> Token, const u8[:] {
+// with "}}}}", its body trimmed: {{{{raw}}}} or {{{{/raw}}}}. A tag that
+// never closes is the compile's error.
+fn scan_raw_tag(input: const u8[:], at: i64, kind: TokenType) -> Token {
     let found = find(input[at + 4..], "}}}}");
-    guard found >= 0 else { return text_token(at, at), "unclosed tag"; }
+    guard found >= 0 else { error_at(input, at, "unclosed tag"); }
     let close = at + 4 + found;
     var start = at + 4;
     if kind == TokenType.RawClose { start += 1; }
     var end = close;
     while start < end && is_space(input[start]) { start += 1; }
     while end > start && is_space(input[end - 1]) { end -= 1; }
-    return tag_token(kind, start, end, at, close + 4), "";
+    return tag_token(kind, start, end, at, close + 4);
 }
 
 // Reads the raw block that opens at input[at], {{{{helper}}}}...{{{{/helper}}}},
@@ -160,11 +160,9 @@ fn scan_raw_tag(input: const u8[:], at: i64, kind: TokenType) -> Token, const u8
 // closing tag. Inside, nothing is a tag: a nested {{{{x}}}} only has to be
 // closed by its own {{{{/x}}}} before the block's closing tag counts, as in
 // handlebars.js. Without a closing tag the content runs to the end, and
-// the parser reports the block as unclosed. Returns where the block ends,
-// and an error, empty when its tags close.
-fn scan_raw_block(input: const u8[:], at: i64, tokens: Token[>..]&) -> i64, const u8[:] {
-    let open, err = scan_raw_tag(input, at, TokenType.RawOpen);
-    guard err.len == 0 else { return at, err; }
+// the parser reports the block as unclosed. Returns where the block ends.
+fn scan_raw_block(input: const u8[:], at: i64, tokens: Token[>..]&) -> i64 {
+    let open = scan_raw_tag(input, at, TokenType.RawOpen);
     tokens.push(open);
     let content = open.outer_end;
     var depth: i64 = 1;
@@ -179,18 +177,19 @@ fn scan_raw_block(input: const u8[:], at: i64, tokens: Token[>..]&) -> i64, cons
             p = tag_at + 4;
             continue;
         }
-        let close, close_err = scan_raw_tag(input, tag_at, TokenType.RawClose);
-        guard close_err.len == 0 else { break; }
+        // A closing tag that never closes ends the content, as no tag.
+        guard find(input[tag_at + 4..], "}}}}") >= 0 else { break; }
+        let close = scan_raw_tag(input, tag_at, TokenType.RawClose);
         depth -= 1;
         if depth == 0 {
             push_text(tokens, content, tag_at);
             tokens.push(close);
-            return close.outer_end, "";
+            return close.outer_end;
         }
         p = close.outer_end;
     }
     push_text(tokens, content, input.len);
-    return input.len, "";
+    return input.len;
 }
 
 // Pushes a Text token for input[start..end] when that range holds something.
@@ -491,16 +490,16 @@ fn lex_tag(source: const u8[:], start: i64, stop: i64, tokens: TagToken[>..<]&) 
 }
 
 // Splits a template into Text, Expression, Comment and raw block tokens,
-// then applies whitespace control. An empty template returns no tokens and
-// "Must not be empty". The scan's position is only ever moved here: past a byte of text,
+// then applies whitespace control. An empty template is the compile's
+// error, "Must not be empty". The scan's position is only ever moved here: past a byte of text,
 // or to the end scan_tag reports for a tag, so a tag jammed against the
 // next one (}}{{) is still a tag. Text after the last tag is flushed.
 //
 // As in handlebars.js, \{{ escapes a mustache: the backslash is dropped,
 // and the text from "{{" to the next mustache is written as it is. \\{{
 // writes one backslash, and the mustache after it is a mustache.
-fn tokenize(input: const u8[:]) -> Token[>..], const u8[:] {
-    guard input.len > 0 else { return [], "Must not be empty"; }
+fn tokenize(input: const u8[:]) -> Token[>..] {
+    guard input.len > 0 else { error_at(input, 0, "Must not be empty"); }
 
     let tokens: Token[>..] = [];
     var text_start: i64 = 0;
@@ -523,14 +522,11 @@ fn tokenize(input: const u8[:]) -> Token[>..], const u8[:] {
             }
             if starts_with(input[at..], "{{{{") {
                 push_text(tokens, text_start, at);
-                let end, raw_err = scan_raw_block(input, at, tokens);
-                guard raw_err.len == 0 else { return [], raw_err; }
-                at = end;
+                at = scan_raw_block(input, at, tokens);
                 text_start = at;
                 continue;
             }
-            let tag, err = scan_tag(input, at);
-            guard err.len == 0 else { return [], err; }
+            let tag = scan_tag(input, at);
             push_text(tokens, text_start, at);
             tokens.push(tag);
             at = tag.outer_end;
@@ -541,5 +537,5 @@ fn tokenize(input: const u8[:]) -> Token[>..], const u8[:] {
     }
     push_text(tokens, text_start, input.len);
     control_whitespace(input, tokens);
-    return tokens, "";
+    return tokens;
 }

@@ -127,12 +127,12 @@ fn main() {
     expect("copied engine", render_with(copied, mary), "[Mary]");
 
     check_load_error("missing file", "missing.hbs", "cannot read template ", "fixtures/missing.hbs");
-    check_load_error("empty file", "empty.hbs", "", "fixtures/empty.hbs: Must not be empty");
-    check_load_error("parse error in file", "bad.hbs", "", "fixtures/bad.hbs: unexpected /with");
+    check_load_error("empty file", "empty.hbs", "", "fixtures/empty.hbs:1:1: Must not be empty");
+    check_load_error("parse error in file", "bad.hbs", "", "fixtures/bad.hbs:1:37: unexpected /with");
 
     let bad = gooseneck::get_engine("{{name!}}");
     let bad_out: u8[>..] = [];
     let bad_json_err = gooseneck::render_json(bad, "{}", bad_out);
-    if bad.error != "Invalid characted in segment" || bad_json_err != bad.error || bad_out.len != 0 { fail("template error", bad.error); }
+    if bad.error != "1:1: Invalid characted in segment: name!" || bad_json_err != bad.error || bad_out.len != 0 { fail("template error", bad.error); }
     print("template error");
 }

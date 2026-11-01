@@ -247,14 +247,14 @@ fn main() {
     if counted_err.len > 0 || counted_out != "1,2,4" || calls != 4 { fail("captured state", "struct", "", counted_out, "1,2,4"); }
     print("captured state");
 
-    check_rejected("unclosed subexpression", "{{#if (eq a b}}x{{/if}}", context, "unclosed subexpression: (eq a b");
-    check_rejected("unclosed nested subexpression", "{{loud (concat a (id b)}}", context, "unclosed subexpression: (concat a (id b)");
-    check_rejected("stray close", "{{loud a)}}", context, "unexpected ): a)");
-    check_rejected("empty subexpression", "{{#if ()}}x{{/if}}", context, "missing helper name: ()");
-    check_rejected("text after subexpression", "{{loud (id a)b}}", context, "text after subexpression: (id a)b");
-    check_rejected("unclosed string in subexpression", "{{loud (id \"a)}}", context, "unclosed string: (id \"a)");
-    check_rejected("bad helper name", "{{loud (a! b)}}", context, "Invalid characted in segment");
-    check_rejected("bad argument in subexpression", "{{loud (id a!)}}", context, "Invalid characted in segment");
-    check_rejected("param after hash", "{{concat sep=\"-\" a}}", context, "positional argument after hash arguments: a");
-    check_rejected("includeZero subexpression", "{{#if a includeZero=(eq a b)}}x{{/if}}", context, "#if: includeZero must be true or false");
+    check_rejected("unclosed subexpression", "{{#if (eq a b}}x{{/if}}", context, "1:7: unclosed subexpression: (eq a b");
+    check_rejected("unclosed nested subexpression", "{{loud (concat a (id b)}}", context, "1:8: unclosed subexpression: (concat a (id b)");
+    check_rejected("stray close", "{{loud a)}}", context, "1:8: unexpected ): a)");
+    check_rejected("empty subexpression", "{{#if ()}}x{{/if}}", context, "1:7: missing helper name: ()");
+    check_rejected("text after subexpression", "{{loud (id a)b}}", context, "1:8: text after subexpression: (id a)b");
+    check_rejected("unclosed string in subexpression", "{{loud (id \"a)}}", context, "1:8: unclosed string: (id \"a)");
+    check_rejected("bad helper name", "{{loud (a! b)}}", context, "1:9: Invalid characted in segment: a!");
+    check_rejected("bad argument in subexpression", "{{loud (id a!)}}", context, "1:12: Invalid characted in segment: a!");
+    check_rejected("param after hash", "{{concat sep=\"-\" a}}", context, "1:18: positional argument after hash arguments: a");
+    check_rejected("includeZero subexpression", "{{#if a includeZero=(eq a b)}}x{{/if}}", context, "1:9: #if: includeZero must be true or false");
 }

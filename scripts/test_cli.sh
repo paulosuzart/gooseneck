@@ -60,7 +60,7 @@ run render test/fixtures/greeting.hbs "$tmp/plain"
 check "template without an extension" "$(cat "$tmp/plain/greeting.out")|$code" "hello John, 21! Springfield (John)|0"
 
 run render test/fixtures/bad.hbs test/fixtures/greeting.json
-check "template error" "$(cat "$tmp/stderr")|$code" "gooseneck: test/fixtures/bad.hbs: unexpected /with|1"
+check "template error" "$(cat "$tmp/stderr")|$code" "gooseneck: test/fixtures/bad.hbs:1:37: unexpected /with|1"
 
 run render test/fixtures/greeting.hbs test/fixtures/greeting.json -o "$tmp/nowhere"
 check "-o with one file" "$(cat "$tmp/stderr")|$code" "gooseneck: -o needs a folder of JSON files; one file renders to stdout|2"

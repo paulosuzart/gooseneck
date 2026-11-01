@@ -132,9 +132,9 @@ fn main() {
           context, "a\n123 Main Stb");
 
     let unclosed = gooseneck::get_engine("a {{name");
-    assert(unclosed.error == "unclosed tag");
+    assert(unclosed.error == "1:3: unclosed tag");
     print("unclosed tag");
     let unclosed_comment = gooseneck::get_engine("a {{!-- note }");
-    assert(unclosed_comment.error == "unclosed tag");
+    assert(unclosed_comment.error == "1:3: unclosed tag");
     print("unclosed comment");
 }

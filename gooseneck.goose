@@ -49,7 +49,8 @@ struct Engine {
 }
 
 // Compiles template text into an Engine. On a malformed template the Engine
-// carries the error, such as "unexpected /with", and renders nothing. The
+// carries the error, where and why, such as "3:5: unexpected /with" (line
+// 3, column 5: the column counts bytes), and renders nothing. The
 // Engine copies what it needs: template may go away afterwards. The
 // helpers and block helpers are given to the render, not here: an Engine
 // cannot hold a function (spec §7.6).
@@ -58,11 +59,12 @@ fn get_engine(template: const u8[:]) -> Engine {
 }
 
 // Reads the template file at path and compiles it into an Engine. The
-// error, if any, is "cannot read template <path>" or "<path>: <parse error>".
+// error, if any, is "cannot read template <path>" or the compile error
+// after the path, as a C compiler gives it: "page.hbs:3:5: unexpected /with".
 fn load_engine(path: const u8[:]) -> Engine {
     let source: u8[>..] = [];
     guard read_file(path, source) else { return failed(str("cannot read template ", path)); }
-    return compile(source, str(path, ": "));
+    return compile(source, str(path, ":"));
 }
 
 // ---------------------------------------------------------------------------

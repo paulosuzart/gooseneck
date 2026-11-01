@@ -212,16 +212,16 @@ fn main() {
     check("raw if", "{{{{if title}}}}{{x}}{{{{/if}}}}", context, true, true, "{{x}}");
     check("raw else", "{{{{raw}}}}{{x}}{{else}}y{{{{/raw}}}}", context, true, true, "{{x}}{{else}}y");
     check("raw braces", "{{{{raw}}}}}}}}{{{{/raw}}}}", context, true, true, "}}}}");
-    check_rejected("unclosed raw block", "{{{{raw}}}}x", context, "unclosed #raw");
-    check_rejected("raw block closed by another", "{{{{raw}}}}x{{{{/bold}}}}", context, "unexpected /bold");
+    check_rejected("unclosed raw block", "{{{{raw}}}}x", context, "1:1: unclosed #raw");
+    check_rejected("raw block closed by another", "{{{{raw}}}}x{{{{/bold}}}}", context, "1:13: unexpected /bold");
     check_rejected("unknown raw block", "{{{{nope}}}}x{{{{/nope}}}}", context, "unknown block helper \"nope\"");
-    check_rejected("unclosed raw tag", "{{{{raw}}x", context, "unclosed tag");
+    check_rejected("unclosed raw tag", "{{{{raw}}x", context, "1:1: unclosed tag");
 
     check_rejected("unknown block helper", "{{#nope}}x{{/nope}}", context, "unknown block helper \"nope\"");
-    check_rejected("unclosed block helper", "{{#bold}}x", context, "unclosed #bold");
+    check_rejected("unclosed block helper", "{{#bold}}x", context, "1:1: unclosed #bold");
     let bold = gooseneck::get_engine("{{#bold}}x{{/bold}}");
     let bare, bare_err = gooseneck::render(bold, context, helpers);
     if bare_err != "unknown block helper \"bold\"" || bare.len != 0 { fail("rendered without the block helpers", "error", bare_err, bare, "unknown block helper \"bold\""); }
     print("rendered without the block helpers");
-    check_rejected("params on if still rejected", "{{#if flag as |f|}}x{{/if}}", context, "#if takes no block parameters");
+    check_rejected("params on if still rejected", "{{#if flag as |f|}}x{{/if}}", context, "1:12: #if takes no block parameters");
 }
