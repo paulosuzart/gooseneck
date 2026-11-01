@@ -544,9 +544,9 @@ template copy by `Span { start, len }`. We chose this on purpose:
   every caller. Plain indices keep the API simple: compile, keep, copy, render.
 
 Raw index arithmetic hurts readability, so it sits behind a few small names:
-`NONE` for "no node", `_innermost(open)` for the block being filled,
-`_arg_at(args, range, i)` for a call's arguments, and `Children` /
-`_append_child` for building document nodes. Rendering is a recursive walk over
+`NONE` for "no node", `innermost(open)` for the block being filled,
+`arg_at(args, range, i)` for a call's arguments, and `Children` /
+`append_child` for building document nodes. Rendering is a recursive walk over
 those indices, with the context frames, `#each` loops, block parameters and
 resolved helper arguments on grow-shrink stacks that each step pushes and
 pops. A path that starts with a block parameter carries a `ParamRef`, found

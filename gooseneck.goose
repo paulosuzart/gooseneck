@@ -25,7 +25,7 @@ namespace gooseneck;
 //
 // Every field is a T[]: an array whose length is chosen at construction.
 // Those are variable-class, and a struct may hold any number of them
-// (spec §3.4), where it may hold only one growable T[>..]. _compile builds
+// (spec §3.4), where it may hold only one growable T[>..]. compile builds
 // the parts in growable locals and copies them in once, the template text
 // included.
 //
@@ -101,7 +101,7 @@ fn load_engine(path: const u8[:]) -> Engine {
 //
 // It is called for each {{helper args}} mustache and each (helper args)
 // subexpression, with the helper's name and its arguments already resolved
-// in the call, and for each bare {{name}} (see _may_be_helper), with no
+// in the call, and for each bare {{name}} (see may_be_helper), with no
 // arguments, before name is looked up as a field. The registration of name
 // runs its block when the call is to name; the block answers with
 // answer(cx, value), or leaves a bare {{name}} to the field.
@@ -120,7 +120,7 @@ fn load_engine(path: const u8[:]) -> Engine {
 // truthiness; it may be an argument of another call. {{#with}} and
 // {{#each}} take a path or a lookup, since a scalar is never a context.
 //
-// lookup is built in (see _lookup_node) and wins over a user helper of the
+// lookup is built in (see lookup_node) and wins over a user helper of the
 // same name: it finds a context node, not a scalar, which no user helper
 // can give. (handlebars.js lets registerHelper replace it.) A call nobody
 // answers gives Null, which writes nothing and is false. (handlebars.js
@@ -169,7 +169,7 @@ struct HelperContext {
 
 // What the user's helpers register on: the call being made, which the
 // registration of call.name answers, or, while listing, where each
-// registration gives its name instead (see _helper_names).
+// registration gives its name instead (see helper_names).
 struct Registry {
     call: HelperContext,
     listing: bool = false,

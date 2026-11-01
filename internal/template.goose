@@ -31,7 +31,7 @@ enum NodeKind { Text, Expression, Call, Block }
 // {{#each items as |item i|}}, and param_ref says whether an Expression's
 // path starts with one (see ParamRef). helper_first marks an Expression
 // that is a bare name, {{name}}: a helper of that name, if the helpers
-// have one, wins over the field (see _may_be_helper).
+// have one, wins over the field (see may_be_helper).
 struct Node {
     kind: NodeKind,
     value: Span,

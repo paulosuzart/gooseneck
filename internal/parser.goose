@@ -94,7 +94,7 @@ fn node(kind: NodeKind, start: i64, end: i64, escaped: bool) -> Node {
 // text it is about, possibly empty. It is two slices rather than one built
 // string because the call parser is recursive (subexpressions nest) and may
 // hold no growable value across its recursive calls (spec §7.8).
-// _error_text joins them once parsing has stopped.
+// error_text joins them once parsing has stopped.
 struct CallError { message: const u8[:], text: const u8[:] }
 
 fn no_error() -> CallError {
@@ -109,7 +109,7 @@ fn error_text(err: CallError) -> u8[>..] {
     return str(err.message, err.text);
 }
 
-// The calls of a tag are parsed from its TagTokens (see _lex_tag). A call
+// The calls of a tag are parsed from its TagTokens (see lex_tag). A call
 // is words: the helper name, then its arguments. A word ends at the next
 // token that has whitespace before it, except inside parentheses, so
 // (helper a b) is one word. Each argument word is a subexpression, a
@@ -338,7 +338,7 @@ fn is_built_in_block(helper: const u8[:]) -> bool {
 // most includeZero=true or false. Any other helper is a user block helper,
 // which takes anything; whether it is registered is the render's to check,
 // since the block helpers are given to the render (see
-// _unknown_block_error). Returns the error, empty when the call holds.
+// unknown_block_error). Returns the error, empty when the call holds.
 fn check_call(source: const u8[:], helper: const u8[:], params: Range, hash: Range, args: const Arg[>..]&) -> u8[>..] {
     if helper == "with" || helper == "each" {
         guard params.count == 1 else { return str("#", helper, " takes exactly one argument"); }
@@ -367,7 +367,7 @@ fn check_call(source: const u8[:], helper: const u8[:], params: Range, hash: Ran
 // it is looked up by name when rendering.
 
 // The index of the "as" of a block's trailing as |a b|, NONE when it has
-// none (see _mark_block_params).
+// none (see mark_block_params).
 fn as_index(tokens: const TagToken[>..<]&) -> i64 {
     var i = tokens.len - 1;
     while i >= 0 && tokens[i].kind != TagTokenKind.As { i -= 1; }

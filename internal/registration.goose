@@ -71,14 +71,14 @@ fn unknown_block_error(engine: const Engine&, block_names: const u8[:]) -> u8[>.
     for node in engine.nodes {
         guard node.kind == NodeKind.Block else { continue; }
         let helper = span_text(engine.text, node.value);
-        guard !is_built_in_block(helper) && !_is_listed(known, helper) else { continue; }
+        guard !is_built_in_block(helper) && !is_listed(known, helper) else { continue; }
         return str("unknown block helper \"", helper, "\"");
     }
     return [];
 }
 
 // Whether names holds name.
-fn _is_listed(names: const u8[:][>..]&, name: const u8[:]) -> bool {
+fn is_listed(names: const u8[:][>..]&, name: const u8[:]) -> bool {
     for listed in names {
         if listed == name { return true; }
     }
@@ -86,7 +86,7 @@ fn _is_listed(names: const u8[:][>..]&, name: const u8[:]) -> bool {
 }
 
 // Appends the names of the block helpers that G registers to names, one
-// per line, as _helper_names does, with a B that walks nothing.
+// per line, as helper_names does, with a B that walks nothing.
 fn block_helper_names<G>(names: u8[>..]&) {
     fn no_body(part: Body) -> bool { return false; }
     fn blocks(reg) { G(reg, no_body); }

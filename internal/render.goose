@@ -30,7 +30,7 @@ struct ParamFrame { frame: i64, key: json::Value }
 // params holds one
 // ParamFrame per block with block parameters whose body is being walked,
 // the innermost last, which a ParamRef counts back from. All are owned by
-// _evaluate, and the document by its caller, outside the walk.
+// evaluate, and the document by its caller, outside the walk.
 struct RenderContext {
     out: u8[>..]&,
     stack: const json::Node&[>..<]&,
@@ -42,7 +42,7 @@ struct RenderContext {
 }
 
 // Resolves path on the stack to a node, or null. Each leading ../ (or ..)
-// climbs one frame; ./, . and this stay (see _navigation_step); with
+// climbs one frame; ./, . and this stay (see navigation_step); with
 // nothing after them they are the frame itself. ../ past the first frame
 // resolves to nothing, and so does a data variable, which is no node. The
 // rest is looked up one dotted segment at a time with json::member; a
@@ -63,7 +63,7 @@ fn lookup(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> const j
     } else if param_ref.up != NONE {
         guard param_ref.slot == 0 else { return null; }
         frame = rc.params[rc.params.len - 1 - param_ref.up].frame;
-        rest = _after_first_segment(path);
+        rest = after_first_segment(path);
     }
     loop {
         let taken, climbs = navigation_step(rest);
@@ -83,7 +83,7 @@ fn lookup(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> const j
 }
 
 // path without its first dotted segment: "name" for item.name, "" for item.
-fn _after_first_segment(path: const u8[:]) -> const u8[:] {
+fn after_first_segment(path: const u8[:]) -> const u8[:] {
     let dot = find(path, ".");
     guard dot >= 0 else { return path[path.len..]; }
     return path[dot + 1..];
@@ -126,7 +126,7 @@ fn format_float(out: u8[>..]&, v: f64) {
 }
 
 // Writes a value as a mustache does. A string follows escaped. An Int is
-// decimal, a Num as _format_float, a Bool true or false. Null, arrays and
+// decimal, a Num as format_float, a Bool true or false. Null, arrays and
 // objects write nothing: an object is a context, an array is for a future
 // each.
 fn write_value(value: json::Value, escaped: bool, rc: RenderContext&) {
@@ -337,7 +337,7 @@ recursive fn eval_user_block<F, G>(node: const Node&, rc: RenderContext&) {
 }
 
 // Runs a Block node's helper: a built-in one, or else a user block helper,
-// which _unknown_block_error found registered before the render began.
+// which unknown_block_error found registered before the render began.
 recursive fn eval_block<F, G>(node: const Node&, rc: RenderContext&) {
     let helper = span_text(rc.engine.text, node.value);
     if helper == "with" {

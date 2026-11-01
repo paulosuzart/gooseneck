@@ -6,13 +6,13 @@ namespace gooseneck;
 // ---------------------------------------------------------------------------
 // Tokenizing.
 //
-// _tokenize is the only code that walks the template: it owns the cursor.
-// _scan_tag reads one tag from a given position with a cursor of its own and
+// tokenize is the only code that walks the template: it owns the cursor.
+// scan_tag reads one tag from a given position with a cursor of its own and
 // returns where the tag ends; nothing else moves through the template. Every
 // token records byte offsets into the template, never a copy. Whitespace
 // control is a separate pass over the finished tokens
-// (_control_whitespace): it only narrows the ranges of Text tokens.
-// Inside a tag, _lex_tag (see Tag contents) splits the body into tokens
+// (control_whitespace): it only narrows the ranges of Text tokens.
+// Inside a tag, lex_tag (see Tag contents) splits the body into tokens
 // once more, and the parser reads only those.
 
 enum TokenType {
@@ -304,7 +304,7 @@ fn strip_line_end(input: const u8[:], t: Token&) {
 }
 
 // Applies ~ and standalone lines to the Text tokens around each tag. The
-// _strip_* helpers narrow tokens[i - 1] and tokens[i + 1] in place; tag is a
+// strip_* helpers narrow tokens[i - 1] and tokens[i + 1] in place; tag is a
 // copy, and only read.
 fn control_whitespace(input: const u8[:], tokens: Token[>..]&) {
     var i: i64 = 0;
@@ -327,7 +327,7 @@ fn control_whitespace(input: const u8[:], tokens: Token[>..]&) {
 // ---------------------------------------------------------------------------
 // Tag contents.
 //
-// _lex_tag splits the body of one tag, the text between its braces (and
+// lex_tag splits the body of one tag, the text between its braces (and
 // after a block's '#' or an {{else}}), into TagTokens: ranges of the
 // template, never copies. Whitespace only separates tokens; each token
 // says whether whitespace came before it, which is what splits a call
@@ -358,7 +358,7 @@ enum TagTokenKind {
     Equals,
     LParen,
     RParen,
-    // The "as" of a trailing as |a b| (see _mark_block_params).
+    // The "as" of a trailing as |a b| (see mark_block_params).
     As,
     Pipe,
     // Any other byte that cannot be in a name, such as '!'.
@@ -493,7 +493,7 @@ fn lex_tag(source: const u8[:], start: i64, stop: i64, tokens: TagToken[>..<]&) 
 // Splits a template into Text, Expression, Comment and raw block tokens,
 // then applies whitespace control. An empty template returns no tokens and
 // "Must not be empty". The scan's position is only ever moved here: past a byte of text,
-// or to the end _scan_tag reports for a tag, so a tag jammed against the
+// or to the end scan_tag reports for a tag, so a tag jammed against the
 // next one (}}{{) is still a tag. Text after the last tag is flushed.
 //
 // As in handlebars.js, \{{ escapes a mustache: the backslash is dropped,

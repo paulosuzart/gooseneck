@@ -27,7 +27,7 @@ fn navigation_step(path: const u8[:]) -> i64, bool {
     return 0, false;
 }
 
-// Drops the leading navigation steps (see _navigation_step). What remains
+// Drops the leading navigation steps (see navigation_step). What remains
 // is the field path the identifier check sees. ../name is parent then
 // name, not a name that contains '/'.
 fn strip_navigation(path: const u8[:]) -> const u8[:] {
@@ -154,7 +154,7 @@ fn segments_error(source: const u8[:], tokens: const TagToken[>..<]&, body: i64,
 }
 
 // Checks a path on its own: whether it is valid, and if not, why (see
-// _path_error).
+// path_error).
 fn validate_path(path: const u8[:]) -> bool, u8[:] {
     let tokens: TagToken[>..<] = [];
     lex_tag(path, 0, path.len, tokens);

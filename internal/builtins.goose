@@ -111,7 +111,7 @@ fn element_at(array: const json::Node&, index: i64) -> const json::Node? {
 }
 
 // The context node a block's only param finds: a path's or a lookup's
-// (see _resolve_node).
+// (see resolve_node).
 recursive fn block_target<F>(node: const Node&, rc: RenderContext&) -> const json::Node? {
     return resolve_node(param(rc, node, 0), rc, F);
 }
