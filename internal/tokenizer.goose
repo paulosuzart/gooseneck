@@ -103,30 +103,75 @@ fn scan_tag(input: const u8[:], at: i64) -> Token {
         escaped = false;
         p += 1;
     }
+    let close = if kind == TokenType.Expression { expression_close(input, at, p, head) } else { comment_close(input, p, head) };
+    guard close >= 0 else { error_at(input, at, "unclosed tag"); }
+    let strip_right = close > p && input[close - 1] == '~';
+    let body_end = if strip_right { close - 1 } else { close };
+    let body = input[p..body_end - head.len];
+    let lead = trim_start(body);
+    let start = p + body.len - lead.len;
+    let end = start + trim_end(lead).len;
+    let tag = if kind == TokenType.Expression { tag_kind(input[start..end]) } else { TagKind.Mustache };
+    return Token {
+        token_type: kind,
+        tag: tag,
+        start: start, end: end, outer_start: at, outer_end: close + 2,
+        escaped: escaped, strip_left: strip_left, strip_right: strip_right,
+    };
+}
+
+// Where the "}}" that closes a comment whose body starts at input[p] is:
+// the first "}}" with head (and an optional ~) right before it, so that
+// {{!-- x }} y --}} is one comment. -1 when there is none.
+fn comment_close(input: const u8[:], p: i64, head: const u8[:]) -> i64 {
     var from = p;
     var found = find(input[from..], "}}");
     while found >= 0 {
         let close = from + found;
-        let strip_right = close > p && input[close - 1] == '~';
-        let body_end = if strip_right { close - 1 } else { close };
-        if body_end - head.len >= p && input[body_end - head.len..body_end] == head {
-            let body = input[p..body_end - head.len];
-            let lead = trim_start(body);
-            let start = p + body.len - lead.len;
-            let end = start + trim_end(lead).len;
-            let tag = if kind == TokenType.Expression { tag_kind(input[start..end]) } else { TagKind.Mustache };
-            return Token {
-                token_type: kind,
-                tag: tag,
-                start: start, end: end, outer_start: at, outer_end: close + 2,
-                escaped: escaped, strip_left: strip_left, strip_right: strip_right,
-            };
-        }
-        // That "}}" was not this tag's closing (e.g. inside {{!-- x }} y --}}).
+        let body_end = if close > p && input[close - 1] == '~' { close - 1 } else { close };
+        if body_end - head.len >= p && input[body_end - head.len..body_end] == head { return close; }
         from = close + 1;
         found = find(input[from..], "}}");
     }
-    error_at(input, at, "unclosed tag");
+    return -1;
+}
+
+// Where the "}}" that closes an expression tag whose body starts at
+// input[p] is, -1 when the template ends first. As in handlebars.js, the
+// body is read token by token: a quoted string or a [segment] may hold
+// anything, "}}" included, and the first head, ~ and "}}" outside them
+// closes the tag. A '}' or a "{{" anywhere else cannot be in a tag, so the
+// tag was closed wrong, as in {{name} text: the compile fails right there,
+// rather than reading on to a later tag's "}}".
+fn expression_close(input: const u8[:], at: i64, p: i64, head: const u8[:]) -> i64 {
+    var q = p;
+    while q < input.len {
+        let c = input[q];
+        if c == '"' || c == '\'' || c == '[' {
+            let close = find(input[q + 1..], if c == '[' { "]" } else { input[q..q + 1] });
+            // Never closed: the parser reports it.
+            if close >= 0 {
+                q += close + 2;
+                continue;
+            }
+        }
+        let close = closing_at(input, q, head);
+        if close >= 0 { return close; }
+        if c == '}' { error_at(input, q, str("expected ", head, "}}: ", input[at..q + 1])); }
+        if starts_with(input[q..], "{{") { error_at(input, q, str("expected ", head, "}}: ", trim_end(input[at..q]))); }
+        q += 1;
+    }
+    return -1;
+}
+
+// Where the "}}" is when input[q..] starts with head, an optional ~ and
+// "}}"; -1 otherwise.
+fn closing_at(input: const u8[:], q: i64, head: const u8[:]) -> i64 {
+    guard starts_with(input[q..], head) else { return -1; }
+    var r = q + head.len;
+    if r < input.len && input[r] == '~' { r += 1; }
+    guard starts_with(input[r..], "}}") else { return -1; }
+    return r;
 }
 
 // A tag token for template[start..end], the tag being

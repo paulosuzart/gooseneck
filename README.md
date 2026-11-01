@@ -389,7 +389,8 @@ it and the latest results.
 - **Clear compile errors**, with line and column: `4:1: unexpected /with`,
   `1:1: unclosed #each`, `1:7: unclosed subexpression: (eq a b`,
   `2:1: #if takes exactly one argument`, `1:9: Invalid character in segment: a!`,
-  and more.
+  and more. A tag closed wrong fails at the stray brace, as in handlebars.js:
+  `{{name} text` gives `1:7: expected }}: {{name}`.
   Render errors for the helpers, before anything is written:
   `unknown block helper "typo"`, `duplicate helper "now"`.
 

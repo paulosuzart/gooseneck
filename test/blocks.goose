@@ -217,6 +217,20 @@ fn main() {
     check_rejected("unknown raw block", "{{{{nope}}}}x{{{{/nope}}}}", context, "unknown block helper \"nope\"");
     check_rejected("unclosed raw tag", "{{{{raw}}x", context, "1:1: unclosed tag");
 
+    // A tag closed wrong fails at the stray brace, as in handlebars.js,
+    // instead of reading on to a later tag's "}}".
+    check_rejected("tag closed by one brace", "{{#each items}}\n  {{name}\n{{/each}}", context, "2:9: expected }}: {{name}");
+    check_rejected("one brace then a tag", "{{title} text {{flag}}", context, "1:8: expected }}: {{title}");
+    check_rejected("one brace at a line end", "{{title}\nfoo", context, "1:8: expected }}: {{title}");
+    check_rejected("tag opened inside a tag", "a {{title text {{flag}}", context, "1:16: expected }}: {{title text");
+    check_rejected("triple closed by two braces", "{{{title}} x", context, "1:9: expected }}}: {{{title}");
+    // Braces and spaces where a tag may hold them.
+    check("padded tags", "{{ title }}|{{~ title ~}}|{{{ title }}}", context, true, true, "Shop &lt;1&gt;|Shop &lt;1&gt;|Shop <1>");
+    check("braces in strings", "{{#tag name=\"em\" class=\"a } b }} c\"}}x{{/tag}}{{#label 'x }'}}!{{/label}}", context, true, true, "<em class=\"a } b }} c\">x</em>x }: !");
+    check("braces in comments", "{{!-- } }} \n {{x}} --}}a{{! } \n }}b", context, true, true, "ab");
+    check("braces in a raw block", "{{{{raw}}}} {x} }{ {{y} {{{{/raw}}}}", context, true, true, " {x} }{ {{y} ");
+    check("hash and else", "{{#if flag includeZero=true}}y{{else}}n{{/if}}", context, true, true, "y");
+
     check_rejected("unknown block helper", "{{#nope}}x{{/nope}}", context, "unknown block helper \"nope\"");
     check_rejected("unclosed block helper", "{{#bold}}x", context, "1:1: unclosed #bold");
     let bold = gooseneck::get_engine("{{#bold}}x{{/bold}}");

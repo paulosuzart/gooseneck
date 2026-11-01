@@ -41,6 +41,16 @@ unclosed raw block
 raw block closed by another
 unknown raw block
 unclosed raw tag
+tag closed by one brace
+one brace then a tag
+one brace at a line end
+tag opened inside a tag
+triple closed by two braces
+padded tags
+braces in strings
+braces in comments
+braces in a raw block
+hash and else
 unknown block helper
 unclosed block helper
 rendered without the block helpers
