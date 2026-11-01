@@ -391,8 +391,8 @@ fn slot_of(source: const u8[:], names: const Span[>..]&, run: Range, name: const
 fn param_ref(source: const u8[:], path: const u8[:], open: const OpenBlock[>..<]&, names: const Span[>..]&) -> ParamRef {
     let taken, climbs = navigation_step(path);
     guard taken == 0 && !starts_with(path, "@") else { return no_param_ref(); }
-    let dot = find(path, ".");
-    let head = if dot >= 0 { path[..dot] } else { path };
+    let first, rest = split_segment(path);
+    let head = segment_name(first);
     var up: i64 = 0;
     var at = open.len - 1;
     while at > 0 {
@@ -467,13 +467,14 @@ fn is_call(tokens: const TagToken[>..<]&) -> bool {
 }
 
 // Whether the mustache {{path}}, lexed into tokens, may call a helper
-// instead: when path is one plain name, as handlebars.js decides. ./name,
+// instead: when path is one name, plain or bracketed ({{[name]}} calls
+// the helper name), as handlebars.js decides. ./name,
 // this.name, ../name, dotted paths, data variables and block parameters
 // are always paths.
 fn may_be_helper(source: const u8[:], tokens: const TagToken[>..<]&, param_ref: ParamRef) -> bool {
     guard param_ref.up == NONE && tokens.len == 1 && is_segment(tokens[0]) else { return false; }
     let name = token_text(source, tokens[0]);
-    return name != "this" && name[0] != '[';
+    return name != "this";
 }
 
 // Turns tokens into nodes, roots and args. Text becomes a Text node, unless
@@ -585,13 +586,13 @@ fn add_path_names(names: Span[>..]&, text: const u8[:], span: Span) {
     var at = span.start + path.len - body.len;
     let end = span.start + span.len;
     while at < end {
-        var stop = at;
-        while stop < end && text[stop] != '.' { stop += 1; }
-        let head = text[at..stop];
-        if head.len > 0 && head != ".." && !has_name(names, text, head) {
-            names.push(Span { start: at, len: stop - at });
+        let segment, rest = split_segment(text[at..end]);
+        let name = segment_name(segment);
+        let name_at = if bracketed(segment) { at + 1 } else { at };
+        if name.len > 0 && segment != ".." && !has_name(names, text, name) {
+            names.push(Span { start: name_at, len: name.len });
         }
-        at = stop + 1;
+        at = end - rest.len;
     }
 }
 

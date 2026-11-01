@@ -210,6 +210,8 @@ fn main() {
     check("bare helper raw", "{{#with user}}{{{first}}}{{/with}}", context, "F<");
     check("scoped paths skip helpers", "{{#with user}}{{./first}}|{{this.first}}|{{this/first}}{{/with}}", context, "Ada|Ada|Ada");
     check("dotted path skips helpers", "{{user.first}}", context, "Ada");
+    check("bracketed bare helper wins", "{{#with user}}{{[first]}}|{{this.[first]}}{{/with}}", context, "F&lt;|Ada");
+    check("bracketed arguments", "{{loud [title]}}|{{loud (concat user.[first] \" \" [user].last)}}|{{lookup [user] \"last\"}}|{{#if [zero]}}y{{else}}n{{/if}}", context, "HELLO|ADA LOVELACE|Lovelace|n");
     check("zero-argument helper", "{{count}}", context, "0");
     check("helper result Null wins", "{{zero}}|{{./zero}}", context, "|0");
     check("param is a path", "{{#with user}}{{loud first}}{{/with}}", context, "ADA");

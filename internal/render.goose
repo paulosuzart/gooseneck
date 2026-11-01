@@ -74,26 +74,40 @@ fn lookup(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> const j
     guard frame >= 0 else { return null; }
     var node: const json::Node? = rc.stack[frame];
     while rest.len > 0 && node {
-        let dot = find(rest, ".");
-        let head = if dot >= 0 { rest[..dot] } else { rest };
-        node .= json::member(node, head);
-        rest = if dot >= 0 { rest[dot + 1..] } else { rest[rest.len..] };
+        let head, after = split_segment(rest);
+        node .= member_named(node, head);
+        rest = after;
     }
     return node;
 }
 
-// path without its first dotted segment: "name" for item.name, "" for item.
+// The member of node that segment names (see names_key), or null.
+fn member_named(node: const json::Node?, segment: const u8[:]) -> const json::Node? {
+    guard bracketed(segment) else { return json::member(node, segment); }
+    guard node else { return null; }
+    match node.val {
+        Obj => {},
+        _ => { return null; },
+    }
+    var member: const json::Node? = node.first;
+    while member {
+        if names_key(segment, member.key) { return member; }
+        member .= member.next;
+    }
+    return null;
+}
+
+// path without its first segment: "name" for item.name, "" for item.
 fn after_first_segment(path: const u8[:]) -> const u8[:] {
-    let dot = find(path, ".");
-    guard dot >= 0 else { return path[path.len..]; }
-    return path[dot + 1..];
+    let head, rest = split_segment(path);
+    return rest;
 }
 
 // The value of the second block parameter of an each, its item's @key, when
 // path is that parameter alone; Null for anything else: a with has no
 // second parameter, and a key has no fields.
 fn param_key(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> json::Value {
-    guard param_ref.slot == 1 && find(path, ".") < 0 else { return json::Value.Null; }
+    guard param_ref.slot == 1 && after_first_segment(path).len == 0 else { return json::Value.Null; }
     return rc.params[rc.params.len - 1 - param_ref.up].key;
 }
 
@@ -249,6 +263,12 @@ fn bare_helper<F>(name: Span, rc: RenderContext&) -> bool {
     return rc.registry.call.answered;
 }
 
+// The helper a bare {{name}} or {{[name]}} would call: name.
+fn helper_name(text: const u8[:], path: Span) -> Span {
+    guard bracketed(span_text(text, path)) else { return path; }
+    return Span { start: path.start + 1, len: path.len - 2 };
+}
+
 // Whether a call is to the built-in lookup.
 fn is_lookup(rc: RenderContext&, name: Span) -> bool {
     return span_text(rc.engine.text, name) == "lookup";
@@ -366,7 +386,7 @@ recursive fn evaluate_node<F, G>(index: i64, rc: RenderContext&) {
         Text => { rc.out.append(value); },
         Expression => {
             if node.helper_first {
-                if bare_helper(node.value, rc, F) {
+                if bare_helper(helper_name(rc.engine.text, node.value), rc, F) {
                     write_value(rc.registry.call.value, node.escaped, rc);
                 } else {
                     eval_expression(value, node.param_ref, node.escaped, rc);

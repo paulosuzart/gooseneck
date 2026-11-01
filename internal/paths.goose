@@ -13,6 +13,66 @@ const INVALID_IDENTIFIER_CHARS: u8[27] = ['!', '"', '#', '%', '&','\'', '(', ')'
                                           '+', ',', '.', '/', ';', '<', '=', '>', '@', 
                                           '[', '\\', ']', '^', '`', '{', '|', '}', '~'];
 
+// A segment may be written in brackets, as handlebars.js allows: [a b],
+// [a.b] or [this] is one segment named by the text between the brackets,
+// taken literally, with \] and \\ standing for ] and \. Nothing in it is
+// navigation, a data variable or a separator: {{[this]}} and {{[@index]}}
+// look up members named "this" and "@index".
+
+// Where the [segment] that opens at source[at] ends, past its ']', or -1
+// when it does not close before stop.
+fn bracket_end(source: const u8[:], at: i64, stop: i64) -> i64 {
+    var p = at + 1;
+    while p < stop {
+        if source[p] == ']' { return p + 1; }
+        let escape = source[p] == '\\' && p + 1 < stop && (source[p + 1] == ']' || source[p + 1] == '\\');
+        p += if escape { 2 } else { 1 };
+    }
+    return -1;
+}
+
+// Splits a valid path into its first segment and what follows the '.'
+// after it: "a" and "b.c" for a.b.c, "[x.y]" and "z" for [x.y].z.
+fn split_segment(path: const u8[:]) -> const u8[:], const u8[:] {
+    var end = path.len;
+    if path.len > 0 && path[0] == '[' {
+        let close = bracket_end(path, 0, path.len);
+        if close >= 0 { end = close; }
+    } else {
+        let dot = find(path, ".");
+        if dot >= 0 { end = dot; }
+    }
+    let rest = if end < path.len { path[end + 1..] } else { path[path.len..] };
+    return path[..end], rest;
+}
+
+// Whether segment is written in brackets.
+fn bracketed(segment: const u8[:]) -> bool {
+    return segment.len >= 2 && segment[0] == '[' && segment[segment.len - 1] == ']';
+}
+
+// The text that names a segment: the segment, or what is between its
+// brackets, escapes as written.
+fn segment_name(segment: const u8[:]) -> const u8[:] {
+    guard bracketed(segment) else { return segment; }
+    return segment[1..segment.len - 1];
+}
+
+// Whether key is the name segment stands for, its escapes read.
+fn names_key(segment: const u8[:], key: const u8[:]) -> bool {
+    let name = segment_name(segment);
+    guard bracketed(segment) else { return key == name; }
+    var i: i64 = 0;
+    var k: i64 = 0;
+    while i < name.len {
+        if name[i] == '\\' && i + 1 < name.len { i += 1; }
+        guard k < key.len && key[k] == name[i] else { return false; }
+        i += 1;
+        k += 1;
+    }
+    return k == key.len;
+}
+
 // The navigation step at the start of path: how many bytes it takes, and
 // whether it climbs to the parent frame. ../ and .. climb; ./, ., this,
 // this. and this/ stay on the current frame. Zero bytes when path starts

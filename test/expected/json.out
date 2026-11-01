@@ -28,3 +28,7 @@ bad escape: json: bad string at byte 10
 text after value: json: trailing input at byte 9
 empty input: json: unexpected end of input at byte 0
 missing json file
+bracketed fields
+bracketed keys
+bracketed paths
+bracketed in blocks

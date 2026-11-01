@@ -26,6 +26,8 @@ bare helper wins
 bare helper raw
 scoped paths skip helpers
 dotted path skips helpers
+bracketed bare helper wins
+bracketed arguments
 zero-argument helper
 helper result Null wins
 param is a path

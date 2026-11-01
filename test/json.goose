@@ -126,4 +126,13 @@ fn main() {
         assert(false);
     }
     print("missing json file");
+
+    // Bracketed segments, [name], are literal names, as in handlebars.js:
+    // spaces, dots, slashes, this and @ are part of the name, and \] is ].
+    // On a typed context they name its fields.
+    check_same("bracketed fields", "{{[name]}}|{{[address].[street]}}|{{address.[city].name}}|{{this.[name]}}|{{#with [address]}}{{[street]}} {{../[name]}}{{/with}}", context, "John|123 Main St|Springfield|John|123 Main St John");
+    let odd = "{\"a b\":\"AB\",\"a.b\":\"ADOT\",\"a/b\":\"ASLASH\",\"this\":\"THIS\",\"..\":\"UP\",\"a]b\":\"ABR\",\"a\\\\\":\"ABS\",\"true\":\"T\",\"1\":\"ONE\",\"x\":{\"a b\":\"XAB\",\"a.b\":\"XADOT\",\"y\":{\"z\":\"XYZ\"}},\"foo bar\":{\"baz\":\"FB\"},\"items\":[{\"k k\":1},{\"k k\":2}]}";
+    check_json("bracketed keys", "{{[a b]}}|{{[a.b]}}|{{[a/b]}}|{{[this]}}|{{[..]}}|{{[a\\]b]}}|{{[true]}}|{{[1]}}", odd, "AB|ADOT|ASLASH|THIS|UP|ABR|T|ONE");
+    check_json("bracketed paths", "{{x.[a b]}}|{{x.[a.b]}}|{{[foo bar].baz}}|{{x.[y].z}}|{{@root.[a b]}}|{{#with x}}{{[a b]}} {{../[a b]}}{{/with}}", odd, "XAB|XADOT|FB|XYZ|AB|XAB AB");
+    check_json("bracketed in blocks", "{{#each [items] as |it|}}{{it.[k k]}}{{[k k]}}{{[@index]}};{{/each}}{{#with [foo bar]}}{{baz}}{{/with}}{{#with x as |p|}}{{p.[a b]}}{{/with}}{{#if [a b]}}!{{/if}}", odd, "11;22;FBXAB!");
 }

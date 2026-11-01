@@ -345,7 +345,9 @@ it and the latest results.
 ## What works today
 
 - **Expressions**: `{{name}}`, dotted paths `{{address.city}}`, `this`, `.`,
-  `./name`, `this.name`, and parent lookups with `../`.
+  `./name`, `this.name`, and parent lookups with `../`. A bracketed segment
+  is one literal name, as in handlebars.js: `{{x.[a b]}}`, `{{[a.b]}}`,
+  `{{[this]}}` (a member named "this"), anywhere a path goes.
 - **Escaping**: `{{x}}` is HTML-escaped exactly like handlebars.js
   (`&`, `<`, `>`, `"`, `'`, `` ` `` and `=`); `{{{x}}}` writes raw.
   `\{{x}}` writes the mustache itself, as text.
@@ -413,16 +415,16 @@ it and the latest results.
     helper gets `@index` and the others only as arguments,
     `{{helper @index}}`.
   - `@level`: there is no logger and no `{{log}}` helper.
-- `{{@root/name}}`: only `.` separates the segments after `@root`
-  (handlebars.js accepts `/` too).
 - User helper answers that are objects or arrays. Answers are scalars for now
   (the built-in `lookup` is the exception).
 - A user helper named `lookup` is never called: the built-in wins
   (handlebars.js lets `registerHelper` replace it). A `lookup` without exactly
   two params renders nothing (handlebars.js throws).
-- A bracketed segment with a space or a dot, such as `{{a.[x y]}}` or
-  `{{a.[x.y]}}`, compiles but finds nothing (handlebars.js reads it as one
-  literal key).
+- `/` separates segments only after `this` and `..` (`{{this/name}}`,
+  `{{../name}}`): `{{a/b}}`, `{{a/[x y]}}` and `{{@root/name}}` are compile
+  errors (handlebars.js reads them as `a.b`, `a.[x y]` and `@root.name`).
+- Inside a bracketed segment, `\\` is one backslash. handlebars.js's lexer
+  reads `\\]` either way, so `{{[a\\]}}` may run on to a later `]` there.
 - `{{this}}` on an object or array writes nothing (handlebars.js writes
   `[object Object]` or a comma-joined list).
 - A call no registered helper answers renders nothing and is falsy

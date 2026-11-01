@@ -147,11 +147,18 @@ fn expression_close(input: const u8[:], at: i64, p: i64, head: const u8[:]) -> i
     var q = p;
     while q < input.len {
         let c = input[q];
-        if c == '"' || c == '\'' || c == '[' {
-            let close = find(input[q + 1..], if c == '[' { "]" } else { input[q..q + 1] });
-            // Never closed: the parser reports it.
+        // Never closed, a string or a [segment] is the parser's to report.
+        if c == '"' || c == '\'' {
+            let close = find(input[q + 1..], input[q..q + 1]);
             if close >= 0 {
                 q += close + 2;
+                continue;
+            }
+        }
+        if c == '[' {
+            let close = bracket_end(input, q, input.len);
+            if close >= 0 {
+                q = close;
                 continue;
             }
         }
@@ -476,8 +483,8 @@ fn lex_one(source: const u8[:], at: i64, stop: i64, after_segment: bool, word_st
         return TagTokenKind.Dot, at + 1;
     }
     if c == '[' {
-        let close = find(source[at..stop], "]");
-        if close >= 0 { return TagTokenKind.Ident, at + close + 1; }
+        let close = bracket_end(source, at, stop);
+        if close >= 0 { return TagTokenKind.Ident, close; }
         return TagTokenKind.Invalid, at + 1;
     }
     if INVALID_IDENTIFIER_CHARS.contains(c) { return TagTokenKind.Invalid, at + 1; }
