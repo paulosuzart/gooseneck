@@ -1,0 +1,28 @@
+{{!-- A tour of the template language. Comments write nothing. --}}
+Paths
+  {{title}} / {{{title}}} / \{{title}}
+  {{author.name}}, {{author.city}}
+  {{#with author}}{{name}} wrote "{{../title}}"{{/with}}
+  {{[odd keys].[a b]}}, {{[odd keys].[a.b]}}, {{[odd keys].[this]}}
+
+Blocks
+  {{#each books}}
+  {{@index}}: {{title}}{{#if @first}} (first){{/if}}{{#if @last}} (last){{/if}}
+    {{#each tags}}
+    - {{this}} of book {{@../index}}
+    {{else}}
+    - no tags
+    {{/each}}
+  {{/each}}
+  {{#each prices}}{{@key}}={{this}} {{/each}}
+  {{#if stock}}in stock{{else if (lookup prices "pen")}}pens only{{else}}none{{/if}}
+  {{#if stock includeZero=true}}stock is a number{{/if}}
+  {{#unless missing}}nothing missing{{/unless}}
+
+Block parameters and lookup
+  {{#each names as |who i|}}
+  {{i}}. {{who}} is {{lookup @root.ages i}}, in {{@root.title}}
+  {{/each}}
+
+Whitespace control
+  [  {{~author.name~}}  ]

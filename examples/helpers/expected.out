@@ -1,0 +1,20 @@
+== helpers in a trailing block, state in a local
+<h1>ADA's shelf</h1>
+<ul>
+  <li>1. FRANKENSTEIN (classic), 12.50 EUR</li>
+  <li>2. DUNE, 9.99 EUR</li>
+</ul>
+
+== the same helpers in a named function
+FRANKENSTEIN (classic); DUNE; 
+== a helper wins over a field of its name; ./ forces the field
+helper / field
+== lookup, by index from another list, and stepping into what it finds
+Frankenstein is 205; Dune is 59; second: Dune
+== block helpers, block parameters and the inverse
+<ul><li><b>Frankenstein</b> #0</li><li><b>Dune</b> #1</li></ul> nothing
+== a raw block hands its helper the text unparsed
+{{owner}} is not parsed, Ada is
+== errors, found before anything is written
+duplicate helper "shout" (wrote 0 bytes)
+unknown block helper "typo" (wrote 0 bytes)

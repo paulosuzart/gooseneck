@@ -1,0 +1,10 @@
+<li>
+  {{@index}}. {{title}}
+  {{#if sections}}
+  <ul>
+    {{#each sections}}
+    {{> chapter}}
+    {{/each}}
+  </ul>
+  {{/if}}
+</li>

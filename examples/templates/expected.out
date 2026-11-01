@@ -1,0 +1,23 @@
+Paths
+  Tour &lt;of&gt; gooseneck / Tour <of> gooseneck / {{title}}
+  Ada, London
+  Ada wrote "Tour &lt;of&gt; gooseneck"
+  spaced, dotted, a member named this
+
+Blocks
+  0: Frankenstein (first)
+    - gothic of book 0
+    - classic of book 0
+  1: Dune (last)
+    - no tags
+  pen=2 ink=0.5 
+  pens only
+  stock is a number
+  nothing missing
+
+Block parameters and lookup
+  0. Grace is 85, in Tour &lt;of&gt; gooseneck
+  1. Alan is 41, in Tour &lt;of&gt; gooseneck
+
+Whitespace control
+  [Ada]

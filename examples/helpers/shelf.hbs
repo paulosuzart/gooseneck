@@ -1,0 +1,8 @@
+<h1>{{shout owner}}'s shelf</h1>
+<ul>
+  {{#each books as |book i|}}
+  <li>{{next}}. {{shout book.title}}{{#if (older book.year)}} (classic){{/if}}, {{price book.cents currency="EUR"}}</li>
+  {{else}}
+  <li>Nothing on the shelf yet.</li>
+  {{/each}}
+</ul>

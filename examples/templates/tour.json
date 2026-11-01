@@ -1,0 +1,13 @@
+{
+  "title": "Tour <of> gooseneck",
+  "author": {"name": "Ada", "city": "London"},
+  "odd keys": {"a b": "spaced", "a.b": "dotted", "this": "a member named this"},
+  "books": [
+    {"title": "Frankenstein", "tags": ["gothic", "classic"]},
+    {"title": "Dune", "tags": []}
+  ],
+  "prices": {"pen": 2, "ink": 0.5},
+  "stock": 0,
+  "names": ["Grace", "Alan"],
+  "ages": [85, 41]
+}

@@ -1,0 +1,18 @@
+== one engine, three kinds of context
+John, 21 - Main St, Springfield
+render_into took 7 nodes
+Mary, 34 - , Shelbyville
+Ana, 7.5 - Rua A, Lima
+== engines in a struct, copied, and owning their text
+[John]
+== compile errors: line:column: why
+3:1: unexpected /each
+1:1: unclosed #each
+1:7: unclosed subexpression: (eq a b
+1:1: #if takes exactly one argument
+1:1: Invalid character in segment: name!
+1:7: expected }}: {{name}
+a render of a broken engine returns its error: 1:1: unexpected /if
+== context errors
+json: expected a value at byte 9
+cannot read JSON no/such/file.json

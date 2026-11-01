@@ -1,0 +1,40 @@
+== files: views/page.hbs and the partials it calls, a typed context
+<head><title>Contents - Frankenstein</title></head>
+<body>
+  <header>
+    <h1>Frankenstein</h1>
+    <p>by Mary Shelley</p>
+  </header>
+  <ul>
+    <li>
+      0. Letters
+      <ul>
+        <li>
+          0. Walton&#x27;s letters
+        </li>
+        <li>
+          1. Victor&#x27;s tale
+        </li>
+      </ul>
+    </li>
+    <li>
+      1. The creature
+    </li>
+  </ul>
+</body>
+
+== hash arguments and a context argument
+[me: Ada] [pet: Rex, Ada]
+== scope: ../ stops at the partial, @root reads, block params do not pass
+Rex||Ada| <||Ada|><||Ada|>
+== a partial alone on its line indents what it writes
+<pre>
+    one
+    two
+</pre>
+== errors
+2:7: unknown partial "nope"
+1:1: partial blocks are not supported yet
+partial depth over 100: loop
+partial depth over 5: loop
+views/typo.hbs:2:5: unknown partial "headr"
