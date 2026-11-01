@@ -1,0 +1,68 @@
+scope at the top
+no ../ past the partial's frame
+context argument
+@index and @first in each
+@key in each over an object
+block params do not pass
+block param not seen
+block param as context
+hash, none
+hash, string
+hash over a context
+hash shadows the context
+hash, path
+hash, parent path
+hash, number and boolean
+hash passed on by name
+hash, missing value shadows
+hash, @root
+recursion
+standalone indents
+standalone after a line
+nested indentation
+not standalone, no indent
+no final newline
+tilde drops the indentation
+name with a slash
+no space after >
+this as context
+context that is not an object
+missing context
+context and hash
+standalone in each
+../ inside a partial
+../ inside a partial, with context
+double-quoted name
+single-quoted name
+bracketed name
+indented standalone blocks inside
+indentation adds up
+standalone in a block
+same partial twice
+nested partial sees the hash
+nested partial in a with does not
+nested partial with context does not
+this with a hash keeps the hash
+nested partial in each does not
+empty partial
+. as context
+hash, @index
+hash resolved where the call is
+hash zero
+typed context
+recursion on a list
+partial per item
+partials from files
+depth limit
+depth limit set on the engine
+unknown partial
+error inside a partial
+two contexts
+missing name
+dynamic partial
+@partial-block
+partial block
+inline partial
+unknown partial inside a partial
+unknown partial in a file
+error in a partial file

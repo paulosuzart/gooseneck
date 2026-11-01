@@ -60,7 +60,8 @@ not rename a namespace; it only picks the package.)
 | call | what it does |
 |---|---|
 | `get_engine(template)` | Compiles template text. |
-| `load_engine(path)` | Reads and compiles a template file. Errors are prefixed with the path. |
+| `get_engine(template, partials)` | Compiles template text, with the partials it calls from a list of `gooseneck::Partial { name, text }`. |
+| `load_engine(path)` | Reads and compiles a template file, and the partials it calls from the files next to it. Errors are prefixed with the path. |
 
 Either way you get an `Engine`. When the template is malformed,
 `engine.error` holds the message and every render returns it instead of
@@ -70,6 +71,45 @@ rendering. The message says where and why, as a compiler does:
 place is the tag's `{{`, or the argument at fault inside it. The `Engine` owns a copy of everything it needs, so the template
 text may go away. Helpers and block helpers aren't given here but to each
 render (see [Helpers](#helpers)): an `Engine` can't hold a function.
+
+### Partials
+
+`{{> name}}` renders the partial `name` in place. They are found when the
+template compiles, and the `Engine` holds them, so a render needs nothing
+more:
+
+```goose
+let partials: gooseneck::Partial[2] = [
+    gooseneck::Partial { name: "header", text: "<h1>{{title}}</h1>" },
+    gooseneck::Partial { name: "tree", text: "{{name}}{{#if kids}}({{#each kids}}{{> tree}}{{/each}}){{/if}}" },
+];
+let engine = gooseneck::get_engine("{{> header}}\n{{> tree root}}", partials);
+```
+
+`load_engine("views/page.hbs")` reads `{{> header}}` from
+`views/header.hbs` and `{{> layout/base}}` from `views/layout/base.hbs`,
+always next to the page, also when a partial calls another. Only the
+partials the page calls are read, and those they call in turn. A partial
+nobody has is a compile error, `2:7: unknown partial "nope"`; an error in a
+partial names it, `views/header.hbs:1:4: ...` (or `header:1:4: ...` from a
+list).
+
+As in handlebars.js:
+
+- `{{> name}}` renders on the current context, `{{> name person}}` on
+  `person`. A partial named like a path, `{{> layout/base}}`, may also be
+  written `{{> "layout/base"}}` or `{{> [layout/base]}}`.
+- Hash arguments, `{{> name title="Hi" who=person.name}}`, are resolved where
+  the call is and come before the context's fields inside the partial.
+- Inside a partial, `../` finds nothing past its context; `@root`, `@index`,
+  `@key`, `@first` and `@last` still read; the caller's block parameters
+  are not seen.
+- A partial alone on its line indents every line it writes by that line's
+  indentation, so nested layouts stay aligned.
+- A partial may call itself. Calls nest at most `engine.partial_depth`
+  deep, 100 by default; past that the render stops with
+  `partial depth over 100: tree` (handlebars.js runs until the JavaScript
+  stack overflows). Set the field on the engine to change it.
 
 ### Rendering
 
@@ -353,7 +393,7 @@ it and the latest results.
   `\{{x}}` writes the mustache itself, as text.
 - **Comments**: `{{! ... }}` and `{{!-- ... --}}`.
 - **Whitespace control**: `{{~x~}}` and standalone lines for block tags,
-  `{{else}}` and comments.
+  `{{else}}`, partials and comments.
 - **`{{#with path}}`** to step into an object.
 - **`{{#if value}}`** with handlebars.js truthiness and `includeZero=true`,
   and its inverse **`{{#unless value}}`**.
@@ -384,6 +424,10 @@ it and the latest results.
   around their body, walk it any number of times on any context, iterate
   with `@index`/`@key`/`@first`/`@last` and block parameters, or walk the
   inverse instead.
+- **Partials**: `{{> name}}`, `{{> name context}}` and
+  `{{> name key=value}}`, recursive ones included, with handlebars.js's
+  scope and standalone indentation, from a list or from the files next to
+  the page (see [Partials](#partials)).
 - **Raw blocks**: `{{{{raw}}}} {{not parsed}} {{{{/raw}}}}` hands a block
   helper its content as plain text.
 - **Two kinds of context**: a typed Goose struct (converted through
@@ -398,7 +442,15 @@ it and the latest results.
 
 ### Not yet
 
-- Partials, inline partials and decorators.
+- Partial blocks (`{{#> layout}}...{{/layout}}`, `{{> @partial-block}}`),
+  inline partials (`{{#*inline "name"}}`), dynamic partials
+  (`{{> (helper)}}`), and decorators. Each of the partial forms is a compile
+  error saying it is not supported yet.
+- An unknown partial is a compile error (handlebars.js throws when the
+  render reaches it).
+- A partial's hash is not merged into the context, as handlebars.js does:
+  `{{this}}`, `{{#each this}}` and the like don't see its keys, which only
+  paths read.
 - `{{^}}`. Block parameters on `#if` and `#unless` are a compile error
   (handlebars.js accepts them and leaves them empty).
 - A user block helper's block parameters are always its body's context and
@@ -539,7 +591,8 @@ its fields with a dynamic key, only sees named fields.
 
 A compiled `Engine` is a plain value: nodes, roots, arguments and names
 live in arrays, link to each other by `i64` index, and point into the
-template copy by `Span { start, len }`. We chose this on purpose:
+template copy by `Span { start, len }`. The partials' text follows the
+page's in that copy, and a partial call holds its template's index. We chose this on purpose:
 
 - **The Engine must be returnable and copyable.** A returned reference must
   point at something the caller supplied (§9.2), so an engine full of
@@ -568,7 +621,8 @@ gooseneck.goose              the library's entry: its public interface, what a p
 internal/tokenizer.goose     a template into Text and tag tokens, whitespace control, a tag's body into TagTokens
 internal/paths.goose         ../, ./ and this, @root and the data variables, the checks on path segments
 internal/template.goose      the parts of a compiled template: nodes, arguments, spans
-internal/parser.goose        tokens into an Engine's nodes and arguments, checked; compile
+internal/parser.goose        tokens into an Engine's nodes and arguments, checked
+internal/compile.goose       a page and the partials it calls into one Engine; compile errors
 internal/context.goose       a typed context converted into the JSON document rendering reads
 internal/registration.goose  the checks before a render: duplicate helpers, unknown block helpers
 internal/builtins.goose      the built-in helpers: lookup, if, unless, with, each

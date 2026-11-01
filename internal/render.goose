@@ -31,6 +31,12 @@ struct ParamFrame { frame: i64, key: json::Value }
 // ParamFrame per block with block parameters whose body is being walked,
 // the innermost last, which a ParamRef counts back from. All are owned by
 // evaluate, and the document by its caller, outside the walk.
+//
+// The partial being walked, if any (see eval_partial): base is the frame
+// it renders on, below which ../ finds nothing; its hash arguments are
+// hash[hash_from..hash_end], after those of the partials it is in; depth
+// counts the partial calls under way. nothing is the frame of a partial
+// whose context finds nothing.
 struct RenderContext {
     out: u8[>..]&,
     stack: const json::Node&[>..<]&,
@@ -39,7 +45,17 @@ struct RenderContext {
     params: ParamFrame[>..<]&,
     resolved: Resolved[>..<]&,
     registry: Registry,
+    hash: HashEntry[>..<]&,
+    nothing: const json::Node&,
+    base: i64 = 0,
+    hash_from: i64 = 0,
+    hash_end: i64 = 0,
+    depth: i64 = 0,
 }
+
+// A hash argument of a partial call, {{> name key=value}}: its key, and
+// its value, the context node a path or a lookup finds, or else the value.
+struct HashEntry { key: const u8[:], node: const json::Node?, value: json::Value }
 
 // Resolves path on the stack to a node, or null. Each leading ../ (or ..)
 // climbs one frame; ./, . and this stay (see navigation_step); with
@@ -52,27 +68,21 @@ struct RenderContext {
 // node instead: the item or the target of the block that declares it. A
 // parameter that is no node, an each's @key, finds nothing. @root starts
 // from the first frame, the context the render began with.
+//
+// Inside a partial, ../ past the partial's frame finds nothing, and on
+// that frame the partial's hash arguments come before its fields (see
+// eval_partial).
 fn lookup(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> const json::Node? {
     guard !is_data_path(path) else { return null; }
-    var rest = path;
-    var frame = rc.stack.len - 1;
-    let rooted, after_root = root_parts(path);
-    if rooted {
-        frame = 0;
-        rest = after_root;
-    } else if param_ref.up != NONE {
-        guard param_ref.slot == 0 else { return null; }
-        frame = rc.params[rc.params.len - 1 - param_ref.up].frame;
-        rest = after_first_segment(path);
-    }
-    loop {
-        let taken, climbs = navigation_step(rest);
-        if taken == 0 { break; }
-        rest = rest[taken..];
-        if climbs { frame -= 1; }
-    }
-    guard frame >= 0 else { return null; }
+    let frame, start = path_start(path, param_ref, rc);
+    guard frame != NONE else { return null; }
+    var rest = start;
     var node: const json::Node? = rc.stack[frame];
+    let entry = hash_entry(frame, rest, rc);
+    if entry != NONE {
+        node .= rc.hash[entry].node;
+        rest = after_first_segment(rest);
+    }
     while rest.len > 0 && node {
         let head, after = split_segment(rest);
         node .= member_named(node, head);
@@ -95,6 +105,49 @@ fn member_named(node: const json::Node?, segment: const u8[:]) -> const json::No
         member .= member.next;
     }
     return null;
+}
+
+// The frame path starts from, and the rest of path to look up from it: the
+// frame its navigation reaches (@root's, a block parameter's, or the
+// current frame's), and the segments after that navigation. NONE when the
+// navigation climbs past the first frame, or past the partial's frame
+// being walked, or path is a param that is no node, an each's @key.
+fn path_start(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> i64, const u8[:] {
+    var rest = path;
+    var frame = rc.stack.len - 1;
+    var floor = rc.base;
+    let rooted, after_root = root_parts(path);
+    if rooted {
+        frame = 0;
+        floor = 0;
+        rest = after_root;
+    } else if param_ref.up != NONE {
+        guard param_ref.slot == 0 else { return NONE, ""; }
+        frame = rc.params[rc.params.len - 1 - param_ref.up].frame;
+        rest = after_first_segment(path);
+    }
+    loop {
+        let taken, climbs = navigation_step(rest);
+        if taken == 0 { break; }
+        rest = rest[taken..];
+        if climbs { frame -= 1; }
+    }
+    guard frame >= floor else { return NONE, ""; }
+    return frame, rest;
+}
+
+// The hash argument of the partial being walked that the first segment of
+// rest names, when rest is looked up from that partial's frame; NONE
+// otherwise. The partial's own hash is searched, the latest key first.
+fn hash_entry(frame: i64, rest: const u8[:], rc: RenderContext&) -> i64 {
+    guard frame == rc.base && rest.len > 0 && rc.hash_end > rc.hash_from else { return NONE; }
+    let head, after = split_segment(rest);
+    var i = rc.hash_end - 1;
+    while i >= rc.hash_from {
+        if names_key(head, rc.hash[i].key) { return i; }
+        i -= 1;
+    }
+    return NONE;
 }
 
 // path without its first segment: "name" for item.name, "" for item.
@@ -176,6 +229,10 @@ fn data_value(path: const u8[:], rc: RenderContext&) -> json::Value {
 fn path_value(path: const u8[:], param_ref: ParamRef, rc: RenderContext&) -> json::Value {
     if is_data_path(path) { return data_value(path, rc); }
     if param_ref.up != NONE && param_ref.slot != 0 { return param_key(path, param_ref, rc); }
+    // A partial's hash argument whose value is no node: a literal, say.
+    let frame, rest = path_start(path, param_ref, rc);
+    let entry = if frame != NONE && !starts_with(path, "@") { hash_entry(frame, rest, rc) } else { NONE };
+    if entry != NONE && after_first_segment(rest).len == 0 && !rc.hash[entry].node { return rc.hash[entry].value; }
     let node = lookup(path, param_ref, rc);
     guard node else { return json::Value.Null; }
     return node.val;
@@ -400,14 +457,16 @@ recursive fn evaluate_node<F, G>(index: i64, rc: RenderContext&) {
             write_value(result, node.escaped, rc);
         },
         Block => { eval_block(node, rc, F, G); },
+        Partial => { eval_partial(node, rc, F, G); },
     }
     if node.next != NONE { evaluate_node(node.next, rc, F, G); }
 }
 
-// Walks each root of engine over doc, with the document's root, node 0, as
-// the first frame. Each root is its own chain; the parser links next only
-// inside a block.
-fn evaluate<F, G>(engine: const Engine&, doc: const json::Node[>..]&, out: u8[>..]&) {
+// Walks the page of engine, templates[0], over doc, with the document's
+// root, node 0, as the first frame. Returns the render's error, empty when
+// it holds: a partial called too deep (see depth_error), which ends the
+// render where it is, with out holding what was written up to there.
+fn evaluate<F, G>(engine: const Engine&, doc: const json::Node[>..]&, out: u8[>..]&) -> u8[>..] {
     let stack: const json::Node&[>..<] = [];
     stack.push(doc[0]);
     let loops: Loop[>..<] = [];
@@ -417,11 +476,126 @@ fn evaluate<F, G>(engine: const Engine&, doc: const json::Node[>..]&, out: u8[>.
     let none = Range { first: 0, count: 0 };
     let call = HelperContext { resolved: resolved, params: none, hash: none, text: text, out: out };
     let registry = Registry { call: call };
-    let rc = RenderContext { out: out, stack: stack, engine: engine, loops: loops, params: params, resolved: resolved, registry: registry };
-    var index: i64 = 0;
-    while index < engine.roots.len {
-        evaluate_node(engine.roots[index], rc, F, G);
-        index += 1;
+    let hash: HashEntry[>..<] = [];
+    let nothing = json::Node { next: null, first: null, key: "", val: json::Value.Null };
+    let rc = RenderContext { out: out, stack: stack, engine: engine, loops: loops, params: params, resolved: resolved, registry: registry, hash: hash, nothing: nothing };
+    return walk(engine.templates[0], rc, F, G);
+}
+
+// Walks template's roots, each its own chain: the parser links next only
+// inside a block. Returns the render's error, which a partial called too
+// deep returns here (see depth_error); empty when the walk ends.
+fn walk<F, G>(template: Template, rc: RenderContext&) -> u8[>..] {
+    walk_template(template, rc, F, G);
+    return [];
+}
+
+// Walks each root of template.
+recursive fn walk_template<F, G>(template: Template, rc: RenderContext&) {
+    for i in template.roots.count {
+        evaluate_node(rc.engine.roots[template.roots.first + i], rc, F, G);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Partials.
+
+// Whether the partial node renders on a context of its own: it has a param
+// other than this, {{> name this}} being {{> name}}.
+fn has_own_context(node: const Node&, rc: const RenderContext&) -> bool {
+    guard node.params.count == 1 else { return false; }
+    match arg_at(rc.engine.args, node.params, 0).value {
+        Path p => {
+            let path = span_text(rc.engine.text, p.path);
+            return path != "this" && path != ".";
+        },
+        _ => { return true; },
+    }
+}
+
+// {{> name context key=value}}: walks the partial's template on context,
+// or on the frame the call is in when it has none. A context that finds
+// nothing gives a frame with nothing in it. The hash arguments, and the
+// context, are resolved where the call is; inside, they come before the
+// context's fields. As in handlebars.js, ../ finds nothing past that
+// frame, while @root, @index and the other data variables still read; the
+// caller's block parameters are not seen. Called on the frame of the
+// partial it is in, a partial sees that one's hash too. A partial alone on
+// its line indents each line it writes (see indent_lines). More than
+// engine.partial_depth calls under way at once end the render with an
+// error (see depth_error).
+recursive fn eval_partial<F, G>(node: const Node&, rc: RenderContext&) {
+    let name = span_text(rc.engine.text, node.value);
+    if rc.depth >= rc.engine.partial_depth { depth_error(rc.engine.partial_depth, name); }
+    let has_context = has_own_context(node, rc);
+    var context: const json::Node? = null;
+    if has_context { context .= resolve_node(param(rc, node, 0), rc, F); }
+    let stack_mark = rc.stack.len;
+    let hash_mark = rc.hash.len;
+    let base = rc.base;
+    let hash_from = rc.hash_from;
+    let hash_end = rc.hash_end;
+    let out_mark = rc.out.len;
+    push_hash(node.hash, rc, F);
+    if has_context {
+        if context { rc.stack.push(context); } else { rc.stack.push(rc.nothing); }
+    }
+    // On the frame of the partial it is in, a partial also sees that one's
+    // hash, as in handlebars.js, which merges a hash into the context.
+    let same_frame = !has_context && rc.stack.len - 1 == base;
+    if !same_frame { rc.hash_from = hash_mark; }
+    rc.base = rc.stack.len - 1;
+    rc.hash_end = rc.hash.len;
+    rc.depth += 1;
+    walk_template(rc.engine.templates[node.partial], rc, F, G);
+    rc.depth -= 1;
+    rc.hash_end = hash_end;
+    rc.hash_from = hash_from;
+    rc.base = base;
+    rc.hash.resize(hash_mark);
+    rc.stack.resize(stack_mark);
+    indent_lines(rc.out, out_mark, span_text(rc.engine.text, node.indent));
+}
+
+// Pushes the hash arguments in range onto rc.hash, each with the node it
+// finds, or else its value.
+recursive fn push_hash<F>(range: Range, rc: RenderContext&) {
+    for i in range.count {
+        let arg = arg_at(rc.engine.args, range, i);
+        let found = resolve_node(arg, rc, F);
+        let value = if found { found.val } else { resolve(arg, rc, F) };
+        rc.hash.push(HashEntry { key: span_text(rc.engine.text, arg.key), node: found, value: value });
+    }
+}
+
+// Ends the render with the error partial depth over 100: name.
+fn depth_error(depth: i64, name: const u8[:]) {
+    return str("partial depth over ", depth, ": ", name) from walk;
+}
+
+// Indents each line of out[from..] by indent, as handlebars.js does a
+// standalone partial's output: every line, the first included, but not
+// an empty last one.
+fn indent_lines(out: u8[>..]&, from: i64, indent: const u8[:]) {
+    guard indent.len > 0 && out.len > from else { return; }
+    var lines: i64 = 1;
+    for i in from..out.len - 1 {
+        if out[i] == '\n' { lines += 1; }
+    }
+    let old_len = out.len;
+    for i in lines * indent.len { out.push(' '); }
+    // Moves each byte to its place, from the last, and writes the indent
+    // in front of every line start on the way.
+    var read = old_len;
+    var write = out.len;
+    while read > from {
+        read -= 1;
+        write -= 1;
+        out[write] = out[read];
+        if read == from || out[read - 1] == '\n' {
+            write -= indent.len;
+            for k in indent.len { out[write + k] = indent[k]; }
+        }
     }
 }
 

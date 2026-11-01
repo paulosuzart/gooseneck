@@ -6,6 +6,7 @@ import internal.tokenizer;
 import internal.paths;
 import internal.template;
 import internal.parser;
+import internal.compile;
 import internal.context;
 import internal.registration;
 import internal.builtins;
@@ -29,24 +30,34 @@ namespace gooseneck;
 // the parts in growable locals and copies them in once, the template text
 // included.
 //
-// - nodes: the parsed template, linked by index;
-// - roots: the top-level chains, each walked on the root context;
+// - nodes: the parsed templates, linked by index;
+// - roots: the top-level chains, each walked on its template's context;
+// - templates: the page, templates[0], then each partial it uses, with its
+//   name and its run of roots (see compile in internal/compile.goose);
 // - args: the arguments of every call, which each Call or Block, and each
 //   subexpression, views as Ranges;
 // - names: every field name the template's paths use; conversion skips the
 //   other fields;
-// - text: a copy of the template, which every node's value, the args and
-//   the names view as Spans;
+// - text: a copy of the template, then of each partial it uses, which
+//   every node's value, the args and the names view as Spans;
 // - error: empty when the template compiled. render and the other entry
-//   points return it instead of rendering.
+//   points return it instead of rendering;
+// - partial_depth: how many partial calls may be under way at once, one
+//   inside another, before the render stops with the error partial depth
+//   over 100: tree. Set it on the Engine to change it.
 struct Engine {
     nodes: Node[],
     roots: i64[],
+    templates: Template[],
     args: Arg[],
     names: Span[],
     text: u8[],
     error: u8[],
+    partial_depth: i64 = 100,
 }
+
+// A partial for get_engine: {{> name}} renders text.
+struct Partial { name: const u8[:], text: const u8[:] }
 
 // Compiles template text into an Engine. On a malformed template the Engine
 // carries the error, where and why, such as "3:5: unexpected /with" (line
@@ -55,16 +66,32 @@ struct Engine {
 // helpers and block helpers are given to the render, not here: an Engine
 // cannot hold a function (spec §7.6).
 fn get_engine(template: const u8[:]) -> Engine {
-    return compile(template, "");
+    let none: Partial[0] = [];
+    return get_engine(template, none);
+}
+
+// get_engine with the partials {{> name}} may call. Only those the
+// template calls, and those they call, are compiled; a call of a partial
+// that is not among them is a compile error, unknown partial "name", and
+// so is an error in a partial, given after its name: "header:1:5: ...".
+fn get_engine(template: const u8[:], partials: const Partial[:]) -> Engine {
+    let source = PartialSource { from_files: false, dir: "", list: partials };
+    return compile(template, "", source);
 }
 
 // Reads the template file at path and compiles it into an Engine. The
 // error, if any, is "cannot read template <path>" or the compile error
 // after the path, as a C compiler gives it: "page.hbs:3:5: unexpected /with".
+// {{> header}} reads the partial header.hbs beside path, and {{> layout/base}}
+// layout/base.hbs; only the partials in use are read. A partial whose file
+// is missing is the error unknown partial "header", and an error in a
+// partial is given after its file: "header.hbs:1:5: ...".
 fn load_engine(path: const u8[:]) -> Engine {
-    let source: u8[>..] = [];
-    guard read_file(path, source) else { return failed(str("cannot read template ", path)); }
-    return compile(source, str(path, ":"));
+    let template: u8[>..] = [];
+    guard read_file(path, template) else { return failed(str("cannot read template ", path)); }
+    let none: Partial[0] = [];
+    let source = PartialSource { from_files: true, dir: dir_of(path), list: none };
+    return compile(template, str(path, ":"), source);
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +373,9 @@ fn no_block_helpers<B>(reg) {}
 // Returns how many nodes the converted context took, which is what the
 // filtered conversion saves on, and the error, empty when the render
 // holds: engine.error, or a helper registered twice, such as duplicate
-// helper "now". On an error out is left as it was and the count is 0.
+// helper "now", found before anything is written; on those out is left as
+// it was and the count is 0. A partial called too deep, partial depth over
+// 100: tree, stops the render where it is: out keeps what was written.
 fn render_into<T>(engine: const Engine&, context: const T&, out: u8[>..]&) -> i64, u8[>..] {
     return render_into(engine, context, out, no_helpers);
 }
@@ -367,7 +396,8 @@ fn render_into<T, F, G>(engine: const Engine&, context: const T&, out: u8[>..]&)
     name_slices(engine, names);
     let doc: json::Node[>..] = [];
     doc_struct(doc, names, "", context);
-    evaluate(engine, doc, out, F, G);
+    let err = evaluate(engine, doc, out, F, G);
+    guard err.len == 0 else { return 0, err; }
     return doc.len, [];
 }
 
@@ -375,7 +405,8 @@ fn render_into<T, F, G>(engine: const Engine&, context: const T&, out: u8[>..]&)
 // Returns the error, empty when the render holds: engine.error, a helper
 // registered twice (see render_into), or json::parse's message, such as
 // "json: expected ',' or '}' at byte 41".
-// On an error out is left as it was.
+// On those errors out is left as it was; a partial called too deep stops
+// the render where it is, as in render_into.
 fn render_json(engine: const Engine&, json_text: const u8[:], out: u8[>..]&) -> u8[>..] {
     return render_json(engine, json_text, out, no_helpers);
 }
@@ -394,8 +425,7 @@ fn render_json<F, G>(engine: const Engine&, json_text: const u8[:], out: u8[>..]
     let decoded: u8[>..] = [];
     let root, err = json::parse(json_text, doc, decoded);
     guard root else { return str(err); }
-    evaluate(engine, doc, out, F, G);
-    return [];
+    return evaluate(engine, doc, out, F, G);
 }
 
 // Renders engine with a context read from the JSON file at path. Returns

@@ -16,8 +16,9 @@ struct Span { start: i64, len: i64 }
 struct Range { first: i64, count: i64 }
 
 // Expression is a {{path}}; Call is a {{helper args...}}, a mustache with
-// arguments, whose helper is the user's (see Helpers in gooseneck.goose).
-enum NodeKind { Text, Expression, Call, Block }
+// arguments, whose helper is the user's (see Helpers in gooseneck.goose);
+// Partial is a {{> name}}.
+enum NodeKind { Text, Expression, Call, Block, Partial }
 
 // One node of a compiled template. value is the text of a Text node, the
 // path of an Expression, or the helper name of a Call or a Block ("with",
@@ -32,6 +33,11 @@ enum NodeKind { Text, Expression, Call, Block }
 // path starts with one (see ParamRef). helper_first marks an Expression
 // that is a bare name, {{name}}: a helper of that name, if the helpers
 // have one, wins over the field (see may_be_helper).
+// A Partial's value is the partial's name, its one param, if any, the
+// context it renders on, and its hash what it sees before that context's
+// fields. partial is the Template it renders, an index into
+// Engine.templates, and indent what each line it writes is indented by
+// (see control_whitespace).
 struct Node {
     kind: NodeKind,
     value: Span,
@@ -44,7 +50,16 @@ struct Node {
     block_params: i64,
     param_ref: ParamRef,
     helper_first: bool,
+    partial: i64 = NONE,
+    indent: Span = Span { start: 0, len: 0 },
 }
+
+// One template of an Engine: the page itself, Engine.templates[0], or a
+// partial it uses. name is the partial's name, as {{> name}} gives it,
+// empty for the page. Its top-level nodes are the run roots of
+// Engine.roots, and its text, from start on, is in Engine.text, where
+// every template follows the one before it.
+struct Template { name: Span, start: i64, roots: Range }
 
 // Where the block parameter a path starts with comes from, found at
 // compile time from where the path is written: up counts the blocks with

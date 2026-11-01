@@ -454,6 +454,56 @@ fn parse_block(source: const u8[:], tokens: const TagToken[>..<]&, tag_start: i6
     return add(nodes, roots, open, node), declared;
 }
 
+// ---------------------------------------------------------------------------
+// Partials: {{> name}}, {{> name context}}, {{> name key=value}}.
+
+// Whether tokens[from..to] can name a partial: a quoted string, or a
+// path-like word such as header, layout/base or [page head].
+fn is_partial_name(tokens: const TagToken[>..<]&, from: i64, to: i64) -> bool {
+    if to - from == 1 && tokens[from].kind == TagTokenKind.String { return true; }
+    for i in from..to {
+        let kind = tokens[i].kind;
+        let fits = kind == TagTokenKind.Ident || kind == TagTokenKind.Number || kind == TagTokenKind.Bool || kind == TagTokenKind.Null || kind == TagTokenKind.Sep || kind == TagTokenKind.Slash || kind == TagTokenKind.Dot || kind == TagTokenKind.DotDot;
+        guard fits else { return false; }
+    }
+    return true;
+}
+
+// The partial name tokens[from..to] gives: the text of the word, without
+// the quotes of a string or the brackets of [name].
+fn partial_name(source: const u8[:], tokens: const TagToken[>..<]&, from: i64, to: i64) -> Span {
+    let text = tokens_text(source, tokens, from, to);
+    let start = tokens[from].start;
+    let quoted = to - from == 1 && tokens[from].kind == TagTokenKind.String;
+    guard quoted || (to - from == 1 && bracketed(text)) else { return Span { start: start, len: text.len }; }
+    return Span { start: start + 1, len: text.len - 2 };
+}
+
+// Parses {{> name context key=value}}, whose body after the '>' is tokens,
+// and adds its Partial node to the innermost open block. Which template
+// the name gives is found once every template is parsed (see compile).
+// handlebars.js's dynamic partials, {{> (helper)}}, and @partial-block
+// are not supported yet; nor are its partial blocks and inline partials
+// (see parse).
+fn parse_partial(source: const u8[:], tokens: const TagToken[>..<]&, token: Token, nodes: Node[>..]&, roots: i64[>..]&, open: OpenBlock[>..<]&, args: Arg[>..]&, names: const Span[>..]&) {
+    guard tokens.len > 0 else { error_at(source, token.outer_start, "missing partial name"); }
+    let first = tokens[0];
+    guard first.kind != TagTokenKind.LParen else { error_at(source, first.start, "dynamic partials are not supported yet"); }
+    let end = name_end(tokens, 0, tokens.len);
+    guard first.kind != TagTokenKind.Data else { error_at(source, first.start, str(tokens_text(source, tokens, 0, end), " is not supported yet")); }
+    guard is_partial_name(tokens, 0, end) else { error_at(source, first.start, str("invalid partial name: ", tokens_text(source, tokens, 0, end))); }
+    let mark = args.len;
+    let name, params, hash = parse_call(source, tokens, 0, tokens.len, token.end, args);
+    guard params.count <= 1 else { error_at(source, token.outer_start, str("a partial takes one context at most: ", source[first.start..token.end])); }
+    bind_arg_paths(source, args, mark, open, names);
+    let partial = partial_name(source, tokens, 0, end);
+    var node = node(NodeKind.Partial, partial.start, partial.start + partial.len, false);
+    node.params = params;
+    node.hash = hash;
+    node.indent = token.indent;
+    add(nodes, roots, open, node);
+}
+
 // Whether a mustache whose lexed body is tokens holds a helper call with
 // arguments, {{helper args}}, rather than a path: whether any token past
 // the first has whitespace before it.
@@ -532,7 +582,12 @@ fn parse(source: const u8[:], tokens: const Token[:], nodes: Node[>..]&, roots: 
                     let helper = trim(word[1..]);
                     guard innermost_is(source, nodes, open, helper) else { error_at(source, token.outer_start, str("unexpected /", helper)); }
                     open.resize(chain_start(open));
+                } else if token.tag == TagKind.Partial {
+                    lex_tag(source, token.start + 1, token.end, tag_tokens);
+                    parse_partial(source, tag_tokens, token, nodes, roots, open, args, names);
                 } else if token.tag == TagKind.Open {
+                    guard !starts_with(word, "#>") else { error_at(source, token.outer_start, "partial blocks are not supported yet"); }
+                    guard !starts_with(word, "#*") else { error_at(source, token.outer_start, "inline partials are not supported yet"); }
                     lex_tag(source, token.start + 1, token.end, tag_tokens);
                     let opener, declared = parse_block(source, tag_tokens, token.outer_start, token.end, nodes, roots, open, args, names);
                     open.push(open_block(opener, declared, token.outer_start));
@@ -607,59 +662,4 @@ fn add_lookup_key_name(names: Span[>..]&, text: const u8[:], args: const Arg[>..
         },
         _ => {},
     }
-}
-
-// An Engine that only carries error.
-fn failed(error: const u8[:]) -> Engine {
-    return Engine { nodes: [], roots: [], args: [], names: [], text: [], error: error };
-}
-
-// Tokenizes, parses and validates template, and returns the Engine for it.
-// prefix starts the error text, if any.
-fn compile(template: const u8[:], prefix: const u8[:]) -> Engine {
-    let nodes: Node[>..] = [];
-    let roots: i64[>..] = [];
-    let args: Arg[>..] = [];
-    let err = parse_template(template, nodes, roots, args);
-    guard err.len == 0 else { return failed(str(prefix, err)); }
-
-    // The paths are those of the expressions and those among the
-    // arguments, which hold every call's, subexpressions included. A
-    // lookup's literal key names a field too.
-    let names: Span[>..] = [];
-    for node in nodes {
-        match node.kind {
-            Expression => { add_path_names(names, template, node.value); },
-            Call => { add_lookup_key_name(names, template, args, node.value, node.params); },
-            _ => {},
-        }
-    }
-    for arg in args {
-        match arg.value {
-            Path p => { add_path_names(names, template, p.path); },
-            Call c => { add_lookup_key_name(names, template, args, c.name, c.params); },
-            _ => {},
-        }
-    }
-    return Engine { nodes: nodes, roots: roots, args: args, names: names, text: template, error: "" };
-}
-
-// Tokenizes and parses template into nodes, roots and args. Returns the
-// compile error, or nothing when the template compiles. The tokenizer and
-// the parser stop at their first error with error_at, which returns it
-// here from however deep they found it.
-fn parse_template(template: const u8[:], nodes: Node[>..]&, roots: i64[>..]&, args: Arg[>..]&) -> u8[>..] {
-    parse(template, tokenize(template), nodes, roots, args);
-    return [];
-}
-
-// Ends the compile with the error why, found at byte at of source, as
-// "line:column: why", both counted from 1: 3:5: unexpected /each.
-fn error_at(source: const u8[:], at: i64, why: const u8[:]) {
-    var line: i64 = 1;
-    var column: i64 = 1;
-    for i in at {
-        if source[i] == '\n' { line += 1; column = 1; } else { column += 1; }
-    }
-    return str(line, ":", column, ": ", why) from parse_template;
 }

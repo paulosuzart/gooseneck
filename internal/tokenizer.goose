@@ -29,10 +29,10 @@ enum TokenType {
 // What an Expression tag is, read from the start of its body once, when the
 // tag is scanned: {{#helper ...}} opens a block, {{/helper}} closes one,
 // {{else}} starts an inverse and {{else helper ...}} chains a block onto
-// it. {{^...}} is not supported; it is told apart only so that its line can
-// be standalone, as handlebars.js's would be. Anything else is a Mustache:
-// a path or a helper call.
-enum TagKind { Mustache, Open, Close, Else, ElseChain, Inverse }
+// it. {{> name}} calls a partial. {{^...}} is not supported; it is told
+// apart only so that its line can be standalone, as handlebars.js's would
+// be. Anything else is a Mustache: a path or a helper call.
+enum TagKind { Mustache, Open, Close, Else, ElseChain, Inverse, Partial }
 
 // The kind of a tag whose trimmed body is body (see TagKind).
 fn tag_kind(body: const u8[:]) -> TagKind {
@@ -40,6 +40,7 @@ fn tag_kind(body: const u8[:]) -> TagKind {
     if body[0] == '#' { return TagKind.Open; }
     if body[0] == '/' { return TagKind.Close; }
     if body[0] == '^' { return TagKind.Inverse; }
+    if body[0] == '>' { return TagKind.Partial; }
     if body == "else" { return TagKind.Else; }
     if body.len > 4 && starts_with(body, "else") && is_space(body[4]) { return TagKind.ElseChain; }
     return TagKind.Mustache;
@@ -66,6 +67,9 @@ struct Token {
     // the Text before the tag / the start of the Text after it.
     strip_left: bool,
     strip_right: bool,
+    // A partial alone on its line: the indentation before it, which the
+    // partial's every line gets (see control_whitespace).
+    indent: Span = Span { start: 0, len: 0 },
 }
 
 fn text_token(start: i64, end: i64) -> Token {
@@ -274,9 +278,11 @@ fn escaped_end(input: const u8[:], at: i64) -> i64 {
 //
 // - ~ strips every whitespace byte, newlines included: {{~ from the end of
 //   the Text before the tag, ~}} from the start of the Text after it.
-// - A block tag ({{#...}}, {{/...}}, {{^...}}) or a comment that is alone on
-//   its line, with only spaces and tabs around it, is "standalone": its line
-//   is removed, the indentation before the tag and the line break after it.
+// - A block tag ({{#...}}, {{/...}}, {{^...}}), a partial or a comment that
+//   is alone on its line, with only spaces and tabs around it, is
+//   "standalone": its line is removed, the indentation before the tag and
+//   the line break after it. A partial keeps that indentation as its own:
+//   each line it writes is indented by it.
 //
 // As in Handlebars, the standalone checks read the text as tokenized, not
 // as stripped, and a neighbor that is another tag makes the line not
@@ -287,7 +293,7 @@ fn is_space(c: u8) -> bool {
 }
 
 // Whether token is a tag that standalone lines apply to: a block tag,
-// {{else}}, a raw block's tag or a comment.
+// {{else}}, a partial, a raw block's tag or a comment.
 fn standalone_kind(token: const Token&) -> bool {
     if token.token_type == TokenType.Comment || token.token_type == TokenType.RawOpen || token.token_type == TokenType.RawClose { return true; }
     return token.token_type == TokenType.Expression && token.tag != TagKind.Mustache;
@@ -367,7 +373,13 @@ fn control_whitespace(input: const u8[:], tokens: Token[>..]&) {
             if tag.strip_left && has_prev { strip_end(input, tokens[i - 1]); }
             if tag.strip_right && has_next { strip_start(input, tokens[i + 1]); }
             if standalone_kind(tag) && prev_blank(input, tokens, i) && next_blank(input, tokens, i) {
-                if has_prev { strip_indent(input, tokens[i - 1]); }
+                if has_prev {
+                    let line_end = tokens[i - 1].end;
+                    strip_indent(input, tokens[i - 1]);
+                    if tag.tag == TagKind.Partial {
+                        tokens[i].indent = Span { start: tokens[i - 1].end, len: line_end - tokens[i - 1].end };
+                    }
+                }
                 if has_next { strip_line_end(input, tokens[i + 1]); }
             }
         }
@@ -541,21 +553,23 @@ fn lex_tag(source: const u8[:], start: i64, stop: i64, tokens: TagToken[>..<]&) 
     mark_block_params(source, tokens);
 }
 
-// Splits a template into Text, Expression, Comment and raw block tokens,
-// then applies whitespace control. An empty template is the compile's
-// error, "Must not be empty". The scan's position is only ever moved here: past a byte of text,
+// Splits the template input[from..] into Text, Expression, Comment and raw
+// block tokens, then applies whitespace control. An empty template is the
+// compile's error, "Must not be empty". The bytes before from are other
+// templates of the same Engine (see compile), never read here.
+// The scan's position is only ever moved here: past a byte of text,
 // or to the end scan_tag reports for a tag, so a tag jammed against the
 // next one (}}{{) is still a tag. Text after the last tag is flushed.
 //
 // As in handlebars.js, \{{ escapes a mustache: the backslash is dropped,
 // and the text from "{{" to the next mustache is written as it is. \\{{
 // writes one backslash, and the mustache after it is a mustache.
-fn tokenize(input: const u8[:]) -> Token[>..] {
-    guard input.len > 0 else { error_at(input, 0, "Must not be empty"); }
+fn tokenize(input: const u8[:], from: i64) -> Token[>..] {
+    guard input.len > from else { error_at(input, from, "Must not be empty"); }
 
     let tokens: Token[>..] = [];
-    var text_start: i64 = 0;
-    var at: i64 = 0;
+    var text_start = from;
+    var at = from;
     while at + 1 < input.len {
         if input[at] == '{' && input[at + 1] == '{' {
             let slashes = backslashes_before(input, text_start, at);
