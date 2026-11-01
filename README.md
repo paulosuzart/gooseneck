@@ -650,3 +650,7 @@ several files of one package may: Goose has no private declarations, so a
 second namespace would hide nothing and only add `ns::` to every call
 between the entry and the engine. `internal/` keeps them apart from the
 interface; it is a convention, not a boundary.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
