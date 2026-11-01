@@ -50,9 +50,10 @@ fn main() {
 ```
 
 The name after `import` must be `gooseneck`: it names the package's entry
-file, `gooseneck.goose` at the root of this repository. Everything in it is
-in the namespace `gooseneck`, so calls read `gooseneck::render(...)`. (The
-import name does not rename a namespace; it only picks the package.)
+file, `gooseneck.goose` at the root of this repository. Everything in it,
+and in the files under `internal/` it imports, is in the namespace
+`gooseneck`, so calls read `gooseneck::render(...)`. (The import name does
+not rename a namespace; it only picks the package.)
 
 ### Preparing the template
 
@@ -555,7 +556,15 @@ and which parameter. Rendering reads it straight off the stack.
 ## Layout
 
 ```
-gooseneck.goose              the library, the package's entry: tokenizer, tag lexer, parser, conversion, renderer
+gooseneck.goose              the library's entry: its public interface, what a program calls as gooseneck::*
+internal/tokenizer.goose     a template into Text and tag tokens, whitespace control, a tag's body into TagTokens
+internal/paths.goose         ../, ./ and this, @root and the data variables, the checks on path segments
+internal/template.goose      the parts of a compiled template: nodes, arguments, spans
+internal/parser.goose        tokens into an Engine's nodes and arguments, checked; compile
+internal/context.goose       a typed context converted into the JSON document rendering reads
+internal/registration.goose  the checks before a render: duplicate helpers, unknown block helpers
+internal/builtins.goose      the built-in helpers: lookup, if, unless, with, each
+internal/render.goose        the walk over the nodes: paths, helper calls, block helpers, output
 main.goose                   CLI: gooseneck render <template> <JSON file or folder>
 examples/http/               the engine inside an HTTP service
 test/                        test suites, fixtures and expected outputs
@@ -571,3 +580,11 @@ source is the repository root; there is no way to point at a subdirectory
 (Goose `docs/packages.md`, "Using a package"). The CLI is a program of its
 own beside it, which imports the library as a module of its directory and
 is never part of what a user's program imports.
+
+The entry imports the files under `internal/` with `import internal.parser;`
+and so on, which resolves from the package's root wherever the package is
+used (Goose spec §11.1). They declare the same namespace, `gooseneck`, as
+several files of one package may: Goose has no private declarations, so a
+second namespace would hide nothing and only add `ns::` to every call
+between the entry and the engine. `internal/` keeps them apart from the
+interface; it is a convention, not a boundary.
